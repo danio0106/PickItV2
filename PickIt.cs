@@ -75,13 +75,51 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         Manual
     }
 
-    private WorkMode GetWorkMode()
+    private bool ShouldExecute()
     {
-        if (!GameController.Window.IsForeground() ||
-            !Settings.Enable ||
-            Input.GetKeyState(Keys.Escape))
+        if (!GameController.Window.IsForeground())
         {
             _pluginBridgeModeOverride = false;
+            return false;
+        }
+
+        if (GameController.Game.IsEscapeState || Input.GetKeyState(Keys.Escape))
+        {
+            _pluginBridgeModeOverride = false;
+            return false;
+        }
+
+        if (!GameController.Player.TryGetComponent<Life>(out var lifeComponent) || lifeComponent.CurHP <= 0)
+        {
+            _pluginBridgeModeOverride = false;
+            return false;
+        }
+
+        if (!GameController.Player.TryGetComponent<Buffs>(out var buffsComponent))
+        {
+            _pluginBridgeModeOverride = false;
+            return false;
+        }
+
+        if (buffsComponent.HasBuff("grace_period"))
+        {
+            _pluginBridgeModeOverride = false;
+            return false;
+        }
+
+        if (!GameController.Player.HasComponent<Actor>())
+        {
+            _pluginBridgeModeOverride = false;
+            return false;
+        }
+
+        return true;
+    }
+
+    private WorkMode GetWorkMode()
+    {
+        if (!Settings.Enable || !ShouldExecute())
+        {
             return WorkMode.Stop;
         }
 
