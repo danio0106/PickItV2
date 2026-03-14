@@ -635,7 +635,9 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
             return;
         }
 
-        if (!Input.GetKeyState(Keys.Escape))
+        // NOTE: Only MOUSE is blocked (WH_MOUSE_LL). Keyboard is never blocked —
+        // Escape, spacebar (LazyLootingPauseKey), and all other keys always work.
+        if (!Input.GetKeyState(Keys.Escape) && !Input.GetKeyState(Settings.LazyLootingPauseKey))
         {
             return;
         }
@@ -646,7 +648,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
 
         if (DateTime.Now > _lastEmergencyUnblockLogAt.AddMilliseconds(500))
         {
-            LogMessage("[PickIt] Emergency input unblock triggered by Escape.");
+            LogMessage("[PickIt] Emergency input unblock triggered by hotkey.");
             _lastEmergencyUnblockLogAt = DateTime.Now;
         }
     }
@@ -723,6 +725,31 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
 
     private bool _isPickingUp = false;
     private DateTime _forceRestoreLeftMouseTill = DateTime.MinValue;
+
+    private LabelOnGround GetNextChestTarget(WorkMode workMode)
+    {
+        if (!Settings.ChestSettings.ClickChests) return null;
+
+        var chestLabel = _chestLabels?.Value.FirstOrDefault(x =>
+            x.ItemOnGround.DistancePlayer < Settings.PickupRange &&
+            IsLabelClickable(x.Label, null));
+
+        if (chestLabel == null) return null;
+
+        var chestAllowedByMode = workMode == WorkMode.Manual || IsEntityInLazyLootRange(chestLabel.ItemOnGround);
+        return chestAllowedByMode ? chestLabel : null;
+    }
+
+    private bool ShouldPreferChest(LabelOnGround chestLabel, PickItItemData pickUpThisItem)
+    {
+        if (pickUpThisItem == null) return true;
+
+        var isDelveChest = chestLabel.ItemOnGround.Metadata?.StartsWith("Metadata/Chests/DelveChests/", StringComparison.OrdinalIgnoreCase) == true;
+        return isDelveChest ||
+               (Settings.ChestSettings.TargetNearbyChestsFirst && chestLabel.ItemOnGround.DistancePlayer < Settings.ChestSettings.TargetNearbyChestsFirstRadius) ||
+               pickUpThisItem.Distance >= chestLabel.ItemOnGround.DistancePlayer;
+    }
+
     private async SyncTask<bool> RunPickerIterationAsync()
     {
         _isPickingUp = false;
@@ -730,50 +757,119 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         {
             if (!GameController.Window.IsForeground()) return true;
 
-            var pickUpThisItem = GetItemsToPickup(true).FirstOrDefault();
-
             var workMode = GetWorkMode();
-            if (workMode == WorkMode.Manual || workMode == WorkMode.Lazy)
+            if (workMode != WorkMode.Manual && workMode != WorkMode.Lazy) return true;
+
+            // Check if there is anything to do before starting a session.
+            var firstItem = GetItemsToPickup(true).FirstOrDefault();
+            var firstChest = GetNextChestTarget(workMode);
+            var haveItem = firstItem != null && (workMode == WorkMode.Manual || ShouldLazyLoot(firstItem));
+            var haveChest = firstChest != null;
+            if (!haveItem && !haveChest) return true;
+
+            // ── Begin batch pickup session ──────────────────────────────
+            _isPickingUp = true;
+            EnsureLeftMouseUpIfNotPhysicallyHeld();
+            var leftMouseHeldAtStart = IsPhysicalLeftMouseDown();
+            var restoreLeftMouseAfterPickup = Settings.UnclickLeftMouseButton && leftMouseHeldAtStart;
+            if (restoreLeftMouseAfterPickup)
             {
-                if (Settings.ChestSettings.ClickChests)
-                {
-                    var chestLabel = _chestLabels?.Value.FirstOrDefault(x =>
-                        x.ItemOnGround.DistancePlayer < Settings.PickupRange &&
-                        IsLabelClickable(x.Label, null));
+                _restoreHeldLeftMouseTill = DateTime.Now.AddMilliseconds(2000);
+                _preserveLeftMouseIntentTill = DateTime.Now.AddMilliseconds(2000);
+                Input.LeftUp();
+            }
 
-                    if (chestLabel != null)
+            // NOTE: Only MOUSE input is blocked (WH_MOUSE_LL hook, id 14).
+            // Keyboard is NEVER blocked — Escape, Spacebar, and all other keys always work.
+            var inputBlocked = Settings.BlockInputWhilePickingUp.Value && BeginBlockMouseInput();
+            GetCursorPos(out var cursorSnapshot);
+            var batchStarted = Stopwatch.StartNew();
+
+            try
+            {
+                const int maxItemsPerSession = 20;
+                const long maxBatchMs = 2500;
+                for (var picked = 0; picked < maxItemsPerSession; picked++)
+                {
+                    TryEmergencyReleaseInputBlock();
+                    if (inputBlocked && _mouseBlockHookHandle == IntPtr.Zero)
                     {
-                        var chestAllowedByMode = workMode == WorkMode.Manual || IsEntityInLazyLootRange(chestLabel.ItemOnGround);
-                        if (chestAllowedByMode)
-                        {
-                            var isDelveChest = chestLabel.ItemOnGround.Metadata?.StartsWith("Metadata/Chests/DelveChests/", StringComparison.OrdinalIgnoreCase) == true;
-                            var shouldPickChest = pickUpThisItem == null ||
-                                                  isDelveChest ||
-                                                  Settings.ChestSettings.TargetNearbyChestsFirst && chestLabel.ItemOnGround.DistancePlayer < Settings.ChestSettings.TargetNearbyChestsFirstRadius ||
-                                                  pickUpThisItem.Distance >= chestLabel.ItemOnGround.DistancePlayer;
-
-                            if (shouldPickChest)
-                            {
-                                await PickAsync(chestLabel.ItemOnGround, chestLabel.Label, null, _chestLabels.ForceUpdate, workMode == WorkMode.Lazy);
-                                return true;
-                            }
-                        }
+                        inputBlocked = false;
+                        break;
                     }
-                }
 
-                var shouldPickItem = workMode == WorkMode.Manual || ShouldLazyLoot(pickUpThisItem);
-                if (!shouldPickItem)
+                    // Hard time limit for the entire batch — never hold the player longer than this.
+                    if (batchStarted.ElapsedMilliseconds > maxBatchMs)
+                        break;
+
+                    // Keep failsafe alive while we are actively picking.
+                    if (inputBlocked)
+                        _mouseBlockFailsafeUntil = DateTime.Now.AddSeconds(2);
+
+                    // Keep the LMB-intent alive throughout the whole batch.
+                    if (restoreLeftMouseAfterPickup)
+                        _preserveLeftMouseIntentTill = DateTime.Now.AddMilliseconds(2000);
+
+                    if (Input.GetKeyState(Settings.LazyLootingPauseKey))
+                    {
+                        DisableLazyLootingTill = DateTime.Now.AddSeconds(2);
+                        break;
+                    }
+
+                    // Re-evaluate work mode — player may have released the hotkey.
+                    var currentWorkMode = GetWorkMode();
+                    if (currentWorkMode != WorkMode.Manual && currentWorkMode != WorkMode.Lazy) break;
+
+                    var pickUpThisItem = GetItemsToPickup(true).FirstOrDefault();
+                    var chestLabel = GetNextChestTarget(currentWorkMode);
+
+                    if (pickUpThisItem == null && chestLabel == null) break;
+
+                    if (chestLabel != null && ShouldPreferChest(chestLabel, pickUpThisItem))
+                    {
+                        await PickSingleAsync(chestLabel.ItemOnGround, chestLabel.Label, null, _chestLabels.ForceUpdate, currentWorkMode == WorkMode.Lazy);
+                    }
+                    else if (pickUpThisItem != null)
+                    {
+                        var shouldPick = currentWorkMode == WorkMode.Manual || ShouldLazyLoot(pickUpThisItem);
+                        if (!shouldPick) break;
+
+                        var result = await PickSingleAsync(
+                            pickUpThisItem.QueriedItem.Entity,
+                            pickUpThisItem.QueriedItem.Label,
+                            pickUpThisItem.QueriedItem.ClientRect,
+                            () => { },
+                            currentWorkMode == WorkMode.Lazy);
+
+                        // Only throttle items that weren't confirmed picked up.
+                        if (!result)
+                            RememberAttempt(pickUpThisItem.QueriedItem.Entity, 300);
+                    }
+                    else break;
+
+                    await TaskUtils.NextFrame();
+                }
+            }
+            finally
+            {
+                if (inputBlocked)
+                    EndBlockMouseInput();
+
+                EnsureLeftMouseUpIfNotPhysicallyHeld();
+
+                if (restoreLeftMouseAfterPickup)
                 {
-                    return true;
+                    SetCursorPos(cursorSnapshot.X, cursorSnapshot.Y);
+                    _restoreHeldLeftMouseTill = DateTime.Now.AddMilliseconds(1500);
+                    _preserveLeftMouseIntentTill = DateTime.Now.AddMilliseconds(1200);
+                    _forceRestoreLeftMouseTill = DateTime.Now.AddMilliseconds(1500);
+                    Input.LeftDown();
                 }
-
-                if (pickUpThisItem == null)
+                else if (inputBlocked)
                 {
-                    return true;
+                    _restoreHeldLeftMouseTill = DateTime.MinValue;
+                    SetCursorPos(cursorSnapshot.X, cursorSnapshot.Y);
                 }
-
-                var didAttemptClick = await PickAsync(pickUpThisItem.QueriedItem.Entity, pickUpThisItem.QueriedItem.Label, pickUpThisItem.QueriedItem.ClientRect, () => { }, workMode == WorkMode.Lazy);
-                RememberAttempt(pickUpThisItem.QueriedItem.Entity, didAttemptClick ? 450 : 1200);
             }
         }
         finally
@@ -799,183 +895,163 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                         && (Settings.PickUpWhenInventoryIsFull || CanFitInventory(x))) ?? [];
     }
 
-    private async SyncTask<bool> PickAsync(Entity item, Element label, RectangleF? customRect, Action onNonClickable, bool isLazyWorkMode)
+    /// <summary>
+    /// Picks a single item/chest within an active batch session.
+    /// Mouse blocking, cursor snapshot and LMB restoration are handled by RunPickerIterationAsync.
+    /// Returns true if the item was confirmed picked up (entity gone / label gone).
+    /// </summary>
+    private async SyncTask<bool> PickSingleAsync(Entity item, Element label, RectangleF? customRect, Action onNonClickable, bool isLazyWorkMode)
     {
-        _isPickingUp = true;
-        EnsureLeftMouseUpIfNotPhysicallyHeld();
-        var didAttemptClick = false;
-        var leftMouseHeldAtStart = IsPhysicalLeftMouseDown();
-        var restoreLeftMouseAfterPickup = Settings.UnclickLeftMouseButton && leftMouseHeldAtStart;
-        if (restoreLeftMouseAfterPickup)
-        {
-            _restoreHeldLeftMouseTill = DateTime.Now.AddMilliseconds(1200);
-            _preserveLeftMouseIntentTill = DateTime.Now.AddMilliseconds(700);
-            Input.LeftUp();
-        }
-
-        var inputBlocked = Settings.BlockInputWhilePickingUp.Value && BeginBlockMouseInput();
-        GetCursorPos(out var cursorSnapshot);
         var tryCount = 0;
+        var totalPasses = 0;
         var hoverAttemptsWithoutTarget = 0;
-        try
+        const int maxTries = 5;
+        const int maxTotalPasses = 15;
+        var itemTimer = Stopwatch.StartNew();
+        const long maxItemMs = 600;
+
+        while (tryCount < maxTries && totalPasses < maxTotalPasses && itemTimer.ElapsedMilliseconds < maxItemMs)
         {
-            while (tryCount < 3)
+            totalPasses++;
+            TryEmergencyReleaseInputBlock();
+
+            if (Input.GetKeyState(Settings.LazyLootingPauseKey))
             {
-                TryEmergencyReleaseInputBlock();
-
-                // Keep lazy-looting pause hotkey responsive, even mid-pick attempt.
-                if (Input.GetKeyState(Settings.LazyLootingPauseKey))
-                {
-                    DisableLazyLootingTill = DateTime.Now.AddSeconds(2);
-                    return true;
-                }
-
-                // Avoid stale click attempts if the item is no longer in lazy-loot range.
-                if (isLazyWorkMode && !IsEntityInLazyLootRange(item))
-                {
-                    return true;
-                }
-
-                if (!IsLabelClickable(label, customRect))
-                {
-                    onNonClickable();
-                    return true;
-                }
-
-                var shouldRespectMovementCheck = !Settings.IgnoreMoving && (!isLazyWorkMode || !Settings.IgnoreMovingInLazyLooting);
-                if (shouldRespectMovementCheck && GameController.Player.GetComponent<Actor>().isMoving)
-                {
-                    if (item.DistancePlayer > Settings.ItemDistanceToIgnoreMoving.Value)
-                    {
-                        await TaskUtils.NextFrame();
-                        continue;
-                    }
-                }
-
-                var useMagicInput = Settings.UseMagicInput.Value;
-                var magicInputCast = useMagicInput ? GetMagicInputCastIfAvailable() : null;
-
-                if (useMagicInput && magicInputCast == null)
-                {
-                    if (!_warnedMissingMagicInput)
-                    {
-                        DebugWindow.LogError("[PickIt] UseMagicInput is enabled, but MagicInput.CastSkillWithTarget was not found. Falling back to mouse input.", 10);
-                        _warnedMissingMagicInput = true;
-                    }
-
-                    useMagicInput = false;
-                }
-
-                if (useMagicInput)
-                {
-                    var canAttemptMagicClick = tryCount == 0 || _sinceLastClick.ElapsedMilliseconds >= Settings.PauseBetweenClicks;
-                    if (!canAttemptMagicClick)
-                    {
-                        await TaskUtils.NextFrame();
-                        continue;
-                    }
-
-                    EnsureLeftMouseUpIfNotPhysicallyHeld();
-
-                    try
-                    {
-                        magicInputCast!(item, 0x400);
-                    }
-                    catch (Exception ex)
-                    {
-                        if (!_warnedMagicInputFailed)
-                        {
-                            DebugWindow.LogError($"[PickIt] MagicInput call failed: {ex.Message}. Falling back to mouse input.", 10);
-                            _warnedMagicInputFailed = true;
-                        }
-
-                        Settings.UseMagicInput.Value = false;
-                        await TaskUtils.NextFrame();
-                        continue;
-                    }
-
-                    didAttemptClick = true;
-                    _sinceLastClick.Restart();
-                    tryCount++;
-                }
-                else
-                {
-                    var position = label.GetClientRect().ClickRandomNum(5, 3) + GameController.Window.GetWindowRectangleTimeCache.TopLeft.ToVector2Num();
-                    if (!IsTargeted(item, label))
-                    {
-                        await SetCursorPositionAsync(position, item, label);
-
-                        // Some Delve chests don't consistently report targeted state.
-                        // After a couple hover attempts, send a direct click fallback.
-                        hoverAttemptsWithoutTarget++;
-                        var canAttemptFallbackClick = tryCount == 0 || _sinceLastClick.ElapsedMilliseconds >= Settings.PauseBetweenClicks;
-                        if (item.HasComponent<Chest>() && hoverAttemptsWithoutTarget >= 2 && canAttemptFallbackClick)
-                        {
-                            if (await CheckPortal(label)) return true;
-                            EnsureLeftMouseUpIfNotPhysicallyHeld();
-                            Input.Click(MouseButtons.Left);
-                            didAttemptClick = true;
-                            _sinceLastClick.Restart();
-                            tryCount++;
-                            hoverAttemptsWithoutTarget = 0;
-                        }
-
-                        await TaskUtils.NextFrame();
-                        continue;
-                    }
-
-                    hoverAttemptsWithoutTarget = 0;
-
-                    if (await CheckPortal(label)) return true;
-                    if (!IsTargeted(item, label))
-                    {
-                        await TaskUtils.NextFrame();
-                        continue;
-                    }
-
-                    var canAttemptNormalClick = tryCount == 0 || _sinceLastClick.ElapsedMilliseconds >= Settings.PauseBetweenClicks;
-                    if (!canAttemptNormalClick)
-                    {
-                        await TaskUtils.NextFrame();
-                        continue;
-                    }
-
-                    EnsureLeftMouseUpIfNotPhysicallyHeld();
-
-                    Input.Click(MouseButtons.Left);
-                    didAttemptClick = true;
-                    _sinceLastClick.Restart();
-                    tryCount++;
-                }
-
-                await TaskUtils.NextFrame();
-            }
-        }
-        finally
-        {
-            if (inputBlocked)
-            {
-                EndBlockMouseInput();
+                DisableLazyLootingTill = DateTime.Now.AddSeconds(2);
+                return false;
             }
 
-            EnsureLeftMouseUpIfNotPhysicallyHeld();
+            if (isLazyWorkMode && !IsEntityInLazyLootRange(item))
+                return false;
 
-            if (restoreLeftMouseAfterPickup)
+            if (!IsLabelClickable(label, customRect))
             {
-                SetCursorPos(cursorSnapshot.X, cursorSnapshot.Y);
-                _restoreHeldLeftMouseTill = DateTime.Now.AddMilliseconds(1200);
-                _preserveLeftMouseIntentTill = DateTime.Now.AddMilliseconds(900);
-                _forceRestoreLeftMouseTill = DateTime.Now.AddMilliseconds(1200);
-                Input.LeftDown();
+                onNonClickable();
+                return false;
             }
-            else if (inputBlocked)
+
+            var shouldRespectMovementCheck = !Settings.IgnoreMoving && (!isLazyWorkMode || !Settings.IgnoreMovingInLazyLooting);
+            if (shouldRespectMovementCheck && GameController.Player.GetComponent<Actor>().isMoving)
             {
-                _restoreHeldLeftMouseTill = DateTime.MinValue;
-                SetCursorPos(cursorSnapshot.X, cursorSnapshot.Y);
+                if (item.DistancePlayer > Settings.ItemDistanceToIgnoreMoving.Value)
+                {
+                    await TaskUtils.NextFrame();
+                    continue;
+                }
             }
+
+            var useMagicInput = Settings.UseMagicInput.Value;
+            var magicInputCast = useMagicInput ? GetMagicInputCastIfAvailable() : null;
+
+            if (useMagicInput && magicInputCast == null)
+            {
+                if (!_warnedMissingMagicInput)
+                {
+                    DebugWindow.LogError("[PickIt] UseMagicInput is enabled, but MagicInput.CastSkillWithTarget was not found. Falling back to mouse input.", 10);
+                    _warnedMissingMagicInput = true;
+                }
+
+                useMagicInput = false;
+            }
+
+            if (useMagicInput)
+            {
+                var canAttemptMagicClick = tryCount == 0 || _sinceLastClick.ElapsedMilliseconds >= Settings.PauseBetweenClicks;
+                if (!canAttemptMagicClick)
+                {
+                    await TaskUtils.NextFrame();
+                    continue;
+                }
+
+                EnsureLeftMouseUpIfNotPhysicallyHeld();
+
+                try
+                {
+                    magicInputCast!(item, 0x400);
+                }
+                catch (Exception ex)
+                {
+                    if (!_warnedMagicInputFailed)
+                    {
+                        DebugWindow.LogError($"[PickIt] MagicInput call failed: {ex.Message}. Falling back to mouse input.", 10);
+                        _warnedMagicInputFailed = true;
+                    }
+
+                    Settings.UseMagicInput.Value = false;
+                    await TaskUtils.NextFrame();
+                    continue;
+                }
+
+                _sinceLastClick.Restart();
+                tryCount++;
+            }
+            else
+            {
+                var position = label.GetClientRect().ClickRandomNum(5, 3) + GameController.Window.GetWindowRectangleTimeCache.TopLeft.ToVector2Num();
+                if (!IsTargeted(item, label))
+                {
+                    await SetCursorPositionAsync(position, item, label);
+
+                    hoverAttemptsWithoutTarget++;
+                    var canAttemptFallbackClick = tryCount == 0 || _sinceLastClick.ElapsedMilliseconds >= Settings.PauseBetweenClicks;
+
+                    // After a couple hover attempts without targeting, click anyway.
+                    // This handles Delve chests and items that don't report targeted state reliably.
+                    if (hoverAttemptsWithoutTarget >= 2 && canAttemptFallbackClick)
+                    {
+                        if (await CheckPortal(label)) return false;
+                        EnsureLeftMouseUpIfNotPhysicallyHeld();
+                        Input.Click(MouseButtons.Left);
+                        _sinceLastClick.Restart();
+                        tryCount++;
+                        hoverAttemptsWithoutTarget = 0;
+
+                        // Give the game a frame to process the click.
+                        await TaskUtils.NextFrame();
+
+                        // Check if the item/chest was actually picked up.
+                        if (!item.IsValid || label is not { IsValid: true, IsVisible: true })
+                            return true;
+                    }
+
+                    await TaskUtils.NextFrame();
+                    continue;
+                }
+
+                hoverAttemptsWithoutTarget = 0;
+
+                if (await CheckPortal(label)) return false;
+                if (!IsTargeted(item, label))
+                {
+                    await TaskUtils.NextFrame();
+                    continue;
+                }
+
+                var canAttemptNormalClick = tryCount == 0 || _sinceLastClick.ElapsedMilliseconds >= Settings.PauseBetweenClicks;
+                if (!canAttemptNormalClick)
+                {
+                    await TaskUtils.NextFrame();
+                    continue;
+                }
+
+                EnsureLeftMouseUpIfNotPhysicallyHeld();
+
+                Input.Click(MouseButtons.Left);
+                _sinceLastClick.Restart();
+                tryCount++;
+            }
+
+            // Give the game a frame to process.
+            await TaskUtils.NextFrame();
+
+            // Confirm whether the item was actually picked up / chest opened.
+            if (!item.IsValid || label is not { IsValid: true, IsVisible: true })
+                return true;
+
+            await TaskUtils.NextFrame();
         }
 
-        return didAttemptClick;
+        return false;
     }
 
     private async Task<bool> CheckPortal(Element label)
