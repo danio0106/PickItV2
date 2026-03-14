@@ -467,7 +467,9 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
 
                     if (chestLabel != null)
                     {
+                        var isDelveChest = chestLabel.ItemOnGround.Metadata?.StartsWith("Metadata/Chests/DelveChests/", StringComparison.OrdinalIgnoreCase) == true;
                         var shouldPickChest = pickUpThisItem == null ||
+                                              isDelveChest ||
                                               Settings.ChestSettings.TargetNearbyChestsFirst && chestLabel.ItemOnGround.DistancePlayer < Settings.ChestSettings.TargetNearbyChestsFirstRadius || 
                                               pickUpThisItem.Distance >= chestLabel.ItemOnGround.DistancePlayer;
 
