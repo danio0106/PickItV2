@@ -457,7 +457,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
             var pickUpThisItem = GetItemsToPickup(true).FirstOrDefault();
 
             var workMode = GetWorkMode();
-            if (workMode == WorkMode.Manual || workMode == WorkMode.Lazy && ShouldLazyLoot(pickUpThisItem))
+            if (workMode == WorkMode.Manual || workMode == WorkMode.Lazy)
             {
                 if (Settings.ChestSettings.ClickChests)
                 {
@@ -467,18 +467,28 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
 
                     if (chestLabel != null)
                     {
-                        var isDelveChest = chestLabel.ItemOnGround.Metadata?.StartsWith("Metadata/Chests/DelveChests/", StringComparison.OrdinalIgnoreCase) == true;
-                        var shouldPickChest = pickUpThisItem == null ||
-                                              isDelveChest ||
-                                              Settings.ChestSettings.TargetNearbyChestsFirst && chestLabel.ItemOnGround.DistancePlayer < Settings.ChestSettings.TargetNearbyChestsFirstRadius || 
-                                              pickUpThisItem.Distance >= chestLabel.ItemOnGround.DistancePlayer;
-
-                        if (shouldPickChest)
+                        var chestAllowedByMode = workMode == WorkMode.Manual || IsEntityInLazyLootRange(chestLabel.ItemOnGround);
+                        if (chestAllowedByMode)
                         {
-                            await PickAsync(chestLabel.ItemOnGround, chestLabel.Label, null, _chestLabels.ForceUpdate, workMode == WorkMode.Lazy);
-                            return true;
+                            var isDelveChest = chestLabel.ItemOnGround.Metadata?.StartsWith("Metadata/Chests/DelveChests/", StringComparison.OrdinalIgnoreCase) == true;
+                            var shouldPickChest = pickUpThisItem == null ||
+                                                  isDelveChest ||
+                                                  Settings.ChestSettings.TargetNearbyChestsFirst && chestLabel.ItemOnGround.DistancePlayer < Settings.ChestSettings.TargetNearbyChestsFirstRadius ||
+                                                  pickUpThisItem.Distance >= chestLabel.ItemOnGround.DistancePlayer;
+
+                            if (shouldPickChest)
+                            {
+                                await PickAsync(chestLabel.ItemOnGround, chestLabel.Label, null, _chestLabels.ForceUpdate, workMode == WorkMode.Lazy);
+                                return true;
+                            }
                         }
                     }
+                }
+
+                var shouldPickItem = workMode == WorkMode.Manual || ShouldLazyLoot(pickUpThisItem);
+                if (!shouldPickItem)
+                {
+                    return true;
                 }
 
                 if (pickUpThisItem == null)
