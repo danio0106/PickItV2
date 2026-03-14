@@ -29,6 +29,7 @@ public class PickItSettings : ISettings
     public ChestSettings ChestSettings { get; set; } = new();
     public ToggleNode UseMagicInput { get; set; } = new ToggleNode(false);
     public ToggleNode UnclickLeftMouseButton { get; set; } = new ToggleNode(true);
+    public ToggleNode BlockInputWhilePickingUp { get; set; } = new ToggleNode(false);
 
     [JsonIgnore]
     public TextNode FilterTest { get; set; } = new TextNode();

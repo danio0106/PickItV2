@@ -12,6 +12,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -540,6 +541,9 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         return labelQuery.FirstOrDefault();
     }
 
+    [DllImport("user32.dll")]
+    private static extern bool BlockInput(bool fBlockIt);
+
     private bool _isPickingUp = false;
     private DateTime _forceRestoreLeftMouseTill = DateTime.MinValue;
     private async SyncTask<bool> RunPickerIterationAsync()
@@ -632,6 +636,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
             Input.LeftUp();
         }
 
+        var inputBlocked = Settings.BlockInputWhilePickingUp.Value && BlockInput(true);
         var tryCount = 0;
         var hoverAttemptsWithoutTarget = 0;
         try
@@ -779,6 +784,11 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         }
         finally
         {
+            if (inputBlocked)
+            {
+                BlockInput(false);
+            }
+
             if (restoreLeftMouseAfterPickup)
             {
                 _preserveLeftMouseIntentTill = DateTime.Now.AddMilliseconds(700);
