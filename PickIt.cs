@@ -267,12 +267,34 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     {
         bool IsFittingEntity(Entity entity)
         {
-            return Settings.ChestSettings.ChestList.Content.Any(
-                    x => x.Enabled?.Value == true &&
-                        !string.IsNullOrEmpty(x.MetadataRegex?.Value) &&
-                        !string.IsNullOrEmpty(entity.Metadata) &&
-                        _regexes.GetValue(x.MetadataRegex.Value, p => new Regex(p))!.IsMatch(entity.Metadata))
-                   && entity.HasComponent<Chest>();
+            if (string.IsNullOrEmpty(entity.Metadata))
+            {
+                return false;
+            }
+
+            // Never target NPC metadata, even if a regex accidentally matches it.
+            if (entity.Metadata.StartsWith("Metadata/NPC/", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var matchedRule = Settings.ChestSettings.ChestList.Content.FirstOrDefault(
+                x => x.Enabled?.Value == true &&
+                     !string.IsNullOrEmpty(x.MetadataRegex?.Value) &&
+                     _regexes.GetValue(x.MetadataRegex.Value, p => new Regex(p))!.IsMatch(entity.Metadata));
+
+            if (matchedRule == null)
+            {
+                return false;
+            }
+
+            if (entity.HasComponent<Chest>())
+            {
+                return true;
+            }
+
+            // Delve targets (veins/resonator-like objects) can be non-Chest entities.
+            return matchedRule.MetadataRegex.Value.Contains("Delve", StringComparison.OrdinalIgnoreCase);
         }
 
         if (GameController.EntityListWrapper.OnlyValidEntities.Any(IsFittingEntity))
