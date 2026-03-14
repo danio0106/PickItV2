@@ -266,7 +266,8 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         {
             return metadata.Contains("DelveMinerWildVein", StringComparison.OrdinalIgnoreCase) ||
                    metadata.Contains("DelveMinerWildChest", StringComparison.OrdinalIgnoreCase) ||
-                   metadata.Contains("AzuriteVein", StringComparison.OrdinalIgnoreCase);
+                   metadata.Contains("AzuriteVein", StringComparison.OrdinalIgnoreCase) ||
+                   metadata.StartsWith("Metadata/Chests/DelveChests/", StringComparison.OrdinalIgnoreCase);
         }
 
         bool IsFittingEntity(Entity entity)
