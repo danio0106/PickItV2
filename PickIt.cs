@@ -277,14 +277,9 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                 return false;
             }
 
-            var hasEnabledDelveRule = Settings.ChestSettings.ChestList.Content.Any(x =>
-                x.Enabled?.Value == true &&
-                !string.IsNullOrEmpty(x.MetadataRegex?.Value) &&
-                x.MetadataRegex.Value.Contains("Delve", StringComparison.OrdinalIgnoreCase));
-
             // Never target NPC metadata, except explicit Delve interactables that are not real town/quest NPCs.
             if (entity.Metadata.StartsWith("Metadata/NPC/", StringComparison.OrdinalIgnoreCase) &&
-                !(hasEnabledDelveRule && IsKnownDelveInteractableMetadata(entity.Metadata)))
+                !IsKnownDelveInteractableMetadata(entity.Metadata))
             {
                 return false;
             }
