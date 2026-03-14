@@ -37,6 +37,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     private readonly Stopwatch _sinceLastClick = Stopwatch.StartNew();
     private readonly ConditionalWeakTable<string, Regex> _regexes = [];
     private readonly Dictionary<long, DateTime> _recentPickupAttempts = [];
+    private bool _warnedMissingMagicInput;
 
     public PickIt()
     {
@@ -582,8 +583,8 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                     return true;
                 }
 
-                RememberAttempt(pickUpThisItem.QueriedItem.Entity);
-                await PickAsync(pickUpThisItem.QueriedItem.Entity, pickUpThisItem.QueriedItem.Label, pickUpThisItem.QueriedItem.ClientRect, () => { }, workMode == WorkMode.Lazy);
+                var didAttemptClick = await PickAsync(pickUpThisItem.QueriedItem.Entity, pickUpThisItem.QueriedItem.Label, pickUpThisItem.QueriedItem.ClientRect, () => { }, workMode == WorkMode.Lazy);
+                RememberAttempt(pickUpThisItem.QueriedItem.Entity, didAttemptClick ? 450 : 1200);
             }
         }
         finally
@@ -612,6 +613,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     private async SyncTask<bool> PickAsync(Entity item, Element label, RectangleF? customRect, Action onNonClickable, bool isLazyWorkMode)
     {
         _isPickingUp = true;
+        var didAttemptClick = false;
         var restoreLeftMouseAfterPickup = false;
         if (Settings.UnclickLeftMouseButton && Input.IsKeyDown(Keys.LButton))
         {
@@ -654,7 +656,23 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                     }
                 }
 
-                if (Settings.UseMagicInput)
+                var useMagicInput = Settings.UseMagicInput.Value;
+                var magicInputCast = useMagicInput
+                    ? GameController.PluginBridge.GetMethod<Action<Entity, uint>>("MagicInput.CastSkillWithTarget")
+                    : null;
+
+                if (useMagicInput && magicInputCast == null)
+                {
+                    if (!_warnedMissingMagicInput)
+                    {
+                        DebugWindow.LogError("[PickIt] UseMagicInput is enabled, but MagicInput.CastSkillWithTarget was not found. Falling back to mouse input.", 10);
+                        _warnedMissingMagicInput = true;
+                    }
+
+                    useMagicInput = false;
+                }
+
+                if (useMagicInput)
                 {
                     var canAttemptMagicClick = tryCount == 0 || _sinceLastClick.ElapsedMilliseconds >= Settings.PauseBetweenClicks;
                     if (!canAttemptMagicClick)
@@ -663,7 +681,8 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                         continue;
                     }
 
-                    GameController.PluginBridge.GetMethod<Action<Entity, uint>>("MagicInput.CastSkillWithTarget")(item, 0x400);
+                    magicInputCast!(item, 0x400);
+                    didAttemptClick = true;
                     _sinceLastClick.Restart();
                     tryCount++;
                 }
@@ -682,6 +701,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                         {
                             if (await CheckPortal(label)) return true;
                             Input.Click(MouseButtons.Left);
+                            didAttemptClick = true;
                             _sinceLastClick.Restart();
                             tryCount++;
                             hoverAttemptsWithoutTarget = 0;
@@ -708,6 +728,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                     }
 
                     Input.Click(MouseButtons.Left);
+                    didAttemptClick = true;
                     _sinceLastClick.Restart();
                     tryCount++;
                 }
@@ -719,12 +740,12 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         {
             if (restoreLeftMouseAfterPickup && !Input.IsKeyDown(Keys.LButton))
             {
-                _forceRestoreLeftMouseTill = DateTime.Now.AddMilliseconds(200);
+                _forceRestoreLeftMouseTill = DateTime.Now.AddMilliseconds(450);
                 Input.LeftDown();
             }
         }
 
-        return true;
+        return didAttemptClick;
     }
 
     private async Task<bool> CheckPortal(Element label)
@@ -754,6 +775,6 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     private static async SyncTask<bool> SetCursorPositionAsync(Vector2 position, Entity item, Element label)
     {
         Input.SetCursorPos(position);
-        return await TaskUtils.CheckEveryFrame(() => IsTargeted(item, label), new CancellationTokenSource(60).Token);
+        return await TaskUtils.CheckEveryFrame(() => IsTargeted(item, label), new CancellationTokenSource(20).Token);
     }
 }
