@@ -262,12 +262,21 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
 
     private List<LabelOnGround> UpdateChestList()
     {
-        bool IsKnownDelveInteractableMetadata(string metadata)
+        bool IsKnownDelveInteractable(Entity entity)
         {
+            var metadata = entity.Metadata ?? string.Empty;
+            var path = entity.Path ?? string.Empty;
+
             return metadata.Contains("DelveMinerWildVein", StringComparison.OrdinalIgnoreCase) ||
                    metadata.Contains("DelveMinerWildChest", StringComparison.OrdinalIgnoreCase) ||
                    metadata.Contains("AzuriteVein", StringComparison.OrdinalIgnoreCase) ||
-                   metadata.StartsWith("Metadata/Chests/DelveChests/", StringComparison.OrdinalIgnoreCase);
+                   metadata.StartsWith("Metadata/Chests/DelveChests/", StringComparison.OrdinalIgnoreCase) ||
+                   ((metadata.Contains("/Delve/", StringComparison.OrdinalIgnoreCase) ||
+                     path.Contains("/Delve/", StringComparison.OrdinalIgnoreCase) ||
+                     metadata.Contains("Azurite", StringComparison.OrdinalIgnoreCase) ||
+                     path.Contains("Azurite", StringComparison.OrdinalIgnoreCase)) &&
+                    !metadata.StartsWith("Metadata/NPC/", StringComparison.OrdinalIgnoreCase) &&
+                    (entity.HasComponent<Chest>() || entity.HasComponent<Targetable>()));
         }
 
         bool IsFittingEntity(Entity entity)
@@ -279,7 +288,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
 
             // Never target NPC metadata, except explicit Delve interactables that are not real town/quest NPCs.
             if (entity.Metadata.StartsWith("Metadata/NPC/", StringComparison.OrdinalIgnoreCase) &&
-                !IsKnownDelveInteractableMetadata(entity.Metadata))
+                !IsKnownDelveInteractable(entity))
             {
                 return false;
             }
@@ -293,15 +302,15 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
             // The NPC guard above already prevents non-Delve NPCs from reaching here.
             if (matchedRule == null)
             {
-                if (IsKnownDelveInteractableMetadata(entity.Metadata))
+                if (IsKnownDelveInteractable(entity))
                 {
                     if (Settings.DebugHighlight)
-                        DebugWindow.LogMsg($"[PickIt] Delve fallback matched: {entity.Metadata}", 5);
+                        DebugWindow.LogMsg($"[PickIt] Delve fallback matched: {entity.Metadata} | {entity.Path}", 5);
                     return true;
                 }
 
                 if (Settings.DebugHighlight)
-                    DebugWindow.LogMsg($"[PickIt] No rule matched: {entity.Metadata}", 5);
+                    DebugWindow.LogMsg($"[PickIt] No rule matched: {entity.Metadata} | {entity.Path}", 5);
                 return false;
             }
 
