@@ -555,6 +555,15 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     [DllImport("user32.dll")]
     private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
 
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct POINT { public int X; public int Y; }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out POINT lpPoint);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetCursorPos(int x, int y);
+
     private IntPtr MouseBlockCallback(int nCode, IntPtr wParam, IntPtr lParam)
         => nCode >= 0 ? (IntPtr)1 : CallNextHookEx(_mouseBlockHookHandle, nCode, wParam, lParam);
 
@@ -666,6 +675,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         }
 
         var inputBlocked = Settings.BlockInputWhilePickingUp.Value && BeginBlockMouseInput();
+        GetCursorPos(out var cursorSnapshot);
         var tryCount = 0;
         var hoverAttemptsWithoutTarget = 0;
         try
@@ -820,9 +830,14 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
 
             if (restoreLeftMouseAfterPickup)
             {
+                SetCursorPos(cursorSnapshot.X, cursorSnapshot.Y);
                 _preserveLeftMouseIntentTill = DateTime.Now.AddMilliseconds(700);
                 _forceRestoreLeftMouseTill = DateTime.Now.AddMilliseconds(900);
                 Input.LeftDown();
+            }
+            else if (inputBlocked)
+            {
+                SetCursorPos(cursorSnapshot.X, cursorSnapshot.Y);
             }
         }
 
