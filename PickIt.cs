@@ -39,6 +39,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     private readonly Dictionary<long, DateTime> _recentPickupAttempts = [];
     private bool _warnedMissingMagicInput;
     private bool _warnedMagicInputFailed;
+    private DateTime _preserveLeftMouseIntentTill = DateTime.MinValue;
 
     public PickIt()
     {
@@ -162,6 +163,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
 
         _inventoryItems = GameController.Game.IngameState.Data.ServerData.PlayerInventories[0].Inventory;
         if (Input.GetKeyState(Settings.LazyLootingPauseKey)) DisableLazyLootingTill = DateTime.Now.AddSeconds(2);
+        if (Input.GetKeyState(Keys.LButton)) _preserveLeftMouseIntentTill = DateTime.Now.AddMilliseconds(350);
 
         return null;
     }
@@ -170,9 +172,13 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     {
         DrawInventoryCells();
 
+        if (Input.GetKeyState(Keys.LButton))
+        {
+            _preserveLeftMouseIntentTill = DateTime.Now.AddMilliseconds(350);
+        }
+
         // Re-assert held LMB for a short window after pickup clicks to avoid occasional missed restores.
-        // Only do this while the user is still physically holding LMB.
-        if (_forceRestoreLeftMouseTill > DateTime.Now && Input.GetKeyState(Keys.LButton) && !Input.IsKeyDown(Keys.LButton))
+        if (_forceRestoreLeftMouseTill > DateTime.Now && _preserveLeftMouseIntentTill > DateTime.Now && !Input.IsKeyDown(Keys.LButton))
         {
             Input.LeftDown();
         }
@@ -616,9 +622,13 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     {
         _isPickingUp = true;
         var didAttemptClick = false;
-        var restoreLeftMouseAfterPickup = Settings.UnclickLeftMouseButton && (Input.GetKeyState(Keys.LButton) || Input.IsKeyDown(Keys.LButton));
+        var restoreLeftMouseAfterPickup = Settings.UnclickLeftMouseButton &&
+                                          (Input.GetKeyState(Keys.LButton) ||
+                                           Input.IsKeyDown(Keys.LButton) ||
+                                           _preserveLeftMouseIntentTill > DateTime.Now);
         if (restoreLeftMouseAfterPickup)
         {
+            _preserveLeftMouseIntentTill = DateTime.Now.AddMilliseconds(700);
             Input.LeftUp();
         }
 
@@ -771,7 +781,8 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         {
             if (restoreLeftMouseAfterPickup)
             {
-                _forceRestoreLeftMouseTill = DateTime.Now.AddMilliseconds(700);
+                _preserveLeftMouseIntentTill = DateTime.Now.AddMilliseconds(700);
+                _forceRestoreLeftMouseTill = DateTime.Now.AddMilliseconds(900);
                 Input.LeftDown();
             }
         }
