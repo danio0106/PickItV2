@@ -45,6 +45,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     private Action<Entity, uint> _cachedMagicInputCast;
     private DateTime _lastEmergencyUnblockLogAt = DateTime.MinValue;
     private DateTime _preserveLeftMouseIntentTill = DateTime.MinValue;
+    private DateTime _restoreHeldLeftMouseTill = DateTime.MinValue;
 
     public PickIt()
     {
@@ -73,6 +74,20 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         GameController.PluginBridge.SaveMethod("PickIt.ListItems", () => GetItemsToPickup(false).Select(x => x.QueriedItem).ToList());
         GameController.PluginBridge.SaveMethod("PickIt.IsActive", () => _pickUpTask?.GetAwaiter().IsCompleted == false);
         GameController.PluginBridge.SaveMethod("PickIt.SetWorkMode", (bool running) => { _pluginBridgeModeOverride = running; });
+
+        if (Settings.UseMagicInput.Value)
+        {
+            var startupMagicInputCast = GetMagicInputCastIfAvailable();
+            if (startupMagicInputCast != null)
+            {
+                DebugWindow.LogMsg("[PickIt] Startup MagicInput probe: bridge available.", 10);
+            }
+            else
+            {
+                DebugWindow.LogError("[PickIt] Startup MagicInput probe: bridge unavailable.", 10);
+            }
+        }
+
         return true;
     }
 
@@ -189,10 +204,10 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
             _preserveLeftMouseIntentTill = DateTime.Now.AddMilliseconds(350);
         }
 
-        // Re-assert held LMB for a short window after pickup clicks, but only if physically held.
+        // Re-assert held LMB for a short window after pickup clicks when pickup started with LMB held.
         if (_forceRestoreLeftMouseTill > DateTime.Now &&
             _preserveLeftMouseIntentTill > DateTime.Now &&
-            IsPhysicalLeftMouseDown() &&
+            _restoreHeldLeftMouseTill > DateTime.Now &&
             !Input.IsKeyDown(Keys.LButton))
         {
             Input.LeftDown();
@@ -653,10 +668,12 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
             if (availableNow)
             {
                 LogMessage("[PickIt] MagicInput bridge is available.");
+                DebugWindow.LogMsg("[PickIt] MagicInput bridge is available.", 10);
             }
             else
             {
                 LogMessage("[PickIt] MagicInput bridge is unavailable. Falling back to mouse input.");
+                DebugWindow.LogError("[PickIt] MagicInput bridge is unavailable. Falling back to mouse input.", 10);
             }
 
             _magicInputAvailable = availableNow;
@@ -791,6 +808,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         var restoreLeftMouseAfterPickup = Settings.UnclickLeftMouseButton && leftMouseHeldAtStart;
         if (restoreLeftMouseAfterPickup)
         {
+            _restoreHeldLeftMouseTill = DateTime.Now.AddMilliseconds(1200);
             _preserveLeftMouseIntentTill = DateTime.Now.AddMilliseconds(700);
             Input.LeftUp();
         }
@@ -942,15 +960,17 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
 
             EnsureLeftMouseUpIfNotPhysicallyHeld();
 
-            if (restoreLeftMouseAfterPickup && IsPhysicalLeftMouseDown())
+            if (restoreLeftMouseAfterPickup)
             {
                 SetCursorPos(cursorSnapshot.X, cursorSnapshot.Y);
-                _preserveLeftMouseIntentTill = DateTime.Now.AddMilliseconds(700);
-                _forceRestoreLeftMouseTill = DateTime.Now.AddMilliseconds(900);
+                _restoreHeldLeftMouseTill = DateTime.Now.AddMilliseconds(1200);
+                _preserveLeftMouseIntentTill = DateTime.Now.AddMilliseconds(900);
+                _forceRestoreLeftMouseTill = DateTime.Now.AddMilliseconds(1200);
                 Input.LeftDown();
             }
             else if (inputBlocked)
             {
+                _restoreHeldLeftMouseTill = DateTime.MinValue;
                 SetCursorPos(cursorSnapshot.X, cursorSnapshot.Y);
             }
         }
