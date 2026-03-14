@@ -337,14 +337,36 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
 
     private List<LabelOnGround> UpdateChestList()
     {
+        bool IsKnownDelveNpcInteractable(Entity entity)
+        {
+            var metadata = entity.Metadata ?? string.Empty;
+
+            // Real Delve interactables on NPC paths should behave like world objects, not actors/NPCs.
+            if (entity.HasComponent<Actor>())
+            {
+                return false;
+            }
+
+            if (metadata.Contains("AzuriteVein", StringComparison.OrdinalIgnoreCase) ||
+                metadata.Contains("DelveMinerWildVein", StringComparison.OrdinalIgnoreCase))
+            {
+                return entity.HasComponent<Targetable>();
+            }
+
+            if (metadata.Contains("DelveMinerWildChest", StringComparison.OrdinalIgnoreCase))
+            {
+                return entity.HasComponent<Chest>();
+            }
+
+            return false;
+        }
+
         bool IsKnownDelveInteractable(Entity entity)
         {
             var metadata = entity.Metadata ?? string.Empty;
             var path = entity.Path ?? string.Empty;
 
-            return metadata.Contains("DelveMinerWildVein", StringComparison.OrdinalIgnoreCase) ||
-                   metadata.Contains("DelveMinerWildChest", StringComparison.OrdinalIgnoreCase) ||
-                   metadata.Contains("AzuriteVein", StringComparison.OrdinalIgnoreCase) ||
+            return IsKnownDelveNpcInteractable(entity) ||
                    metadata.StartsWith("Metadata/Chests/DelveChests/", StringComparison.OrdinalIgnoreCase) ||
                    ((metadata.Contains("/Delve/", StringComparison.OrdinalIgnoreCase) ||
                      path.Contains("/Delve/", StringComparison.OrdinalIgnoreCase) ||
