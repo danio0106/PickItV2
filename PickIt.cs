@@ -131,15 +131,6 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
             }
         }
 
-        if ((!_isPickingUp || _pickUpTask == null) && _unclickedMouse)
-        {
-            _unclickedMouse = false;
-            if (!Input.IsKeyDown(Keys.LButton))
-            {
-                Input.LeftDown();
-            }
-        }
-
         if (GetWorkMode() != WorkMode.Stop)
         {
             TaskUtils.RunOrRestart(ref _pickUpTask, RunPickerIterationAsync);
@@ -410,7 +401,6 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     }
 
     private bool _isPickingUp = false;
-    private bool _unclickedMouse = false;
     private async SyncTask<bool> RunPickerIterationAsync()
     {
         _isPickingUp = false;
@@ -478,65 +468,83 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     private async SyncTask<bool> PickAsync(Entity item, Element label, RectangleF? customRect, Action onNonClickable)
     {
         _isPickingUp = true;
-        var tryCount = 0;
-        while (tryCount < 3)
+        var restoreLeftMouseAfterPickup = false;
+        if (Settings.UnclickLeftMouseButton && Input.IsKeyDown(Keys.LButton))
         {
-            if (!IsLabelClickable(label, customRect))
-            {
-                onNonClickable();
-                return true;
-            }
+            Input.LeftUp();
+            restoreLeftMouseAfterPickup = true;
+        }
 
-            if (!Settings.IgnoreMoving && GameController.Player.GetComponent<Actor>().isMoving)
+        var tryCount = 0;
+        try
+        {
+            while (tryCount < 3)
             {
-                if (item.DistancePlayer > Settings.ItemDistanceToIgnoreMoving.Value)
+                // Keep lazy-looting pause hotkey responsive, even mid-pick attempt.
+                if (Input.GetKeyState(Settings.LazyLootingPauseKey))
                 {
-                    await TaskUtils.NextFrame();
-                    continue;
-                }
-            }
-
-            if (Settings.UseMagicInput)
-            {
-                if (Settings.UnclickLeftMouseButton && Input.IsKeyDown(Keys.LButton))
-                {
-                    _unclickedMouse = true;
-                    Input.LeftUp();
+                    DisableLazyLootingTill = DateTime.Now.AddSeconds(2);
+                    return true;
                 }
 
-                if (_sinceLastClick.ElapsedMilliseconds > Settings.PauseBetweenClicks)
+                if (!IsLabelClickable(label, customRect))
                 {
-                    GameController.PluginBridge.GetMethod<Action<Entity, uint>>("MagicInput.CastSkillWithTarget")(item, 0x400);
-                    _sinceLastClick.Restart();
-                    tryCount++;
+                    onNonClickable();
+                    return true;
                 }
-            }
-            else
-            {
-                var position = label.GetClientRect().ClickRandomNum(5, 3) + GameController.Window.GetWindowRectangleTimeCache.TopLeft.ToVector2Num();
-                if (_sinceLastClick.ElapsedMilliseconds > Settings.PauseBetweenClicks)
+
+                if (!Settings.IgnoreMoving && GameController.Player.GetComponent<Actor>().isMoving)
                 {
-                    if (!IsTargeted(item, label))
+                    if (item.DistancePlayer > Settings.ItemDistanceToIgnoreMoving.Value)
                     {
-                        await SetCursorPositionAsync(position, item, label);
+                        await TaskUtils.NextFrame();
+                        continue;
                     }
-                    else
-                    {
-                        if (await CheckPortal(label)) return true;
-                        if (!IsTargeted(item, label))
-                        {
-                            await TaskUtils.NextFrame();
-                            continue;
-                        }
+                }
 
-                        Input.Click(MouseButtons.Left);
+                if (Settings.UseMagicInput)
+                {
+                    if (_sinceLastClick.ElapsedMilliseconds > Settings.PauseBetweenClicks)
+                    {
+                        GameController.PluginBridge.GetMethod<Action<Entity, uint>>("MagicInput.CastSkillWithTarget")(item, 0x400);
                         _sinceLastClick.Restart();
                         tryCount++;
                     }
                 }
-            }
+                else
+                {
+                    var position = label.GetClientRect().ClickRandomNum(5, 3) + GameController.Window.GetWindowRectangleTimeCache.TopLeft.ToVector2Num();
+                    if (_sinceLastClick.ElapsedMilliseconds > Settings.PauseBetweenClicks)
+                    {
+                        if (!IsTargeted(item, label))
+                        {
+                            await SetCursorPositionAsync(position, item, label);
+                        }
+                        else
+                        {
+                            if (await CheckPortal(label)) return true;
+                            if (!IsTargeted(item, label))
+                            {
+                                await TaskUtils.NextFrame();
+                                continue;
+                            }
 
-            await TaskUtils.NextFrame();
+                            Input.Click(MouseButtons.Left);
+                            _sinceLastClick.Restart();
+                            tryCount++;
+                        }
+                    }
+                }
+
+                await TaskUtils.NextFrame();
+            }
+        }
+        finally
+        {
+            if (restoreLeftMouseAfterPickup && !Input.IsKeyDown(Keys.LButton))
+            {
+                Input.LeftDown();
+            }
         }
 
         return true;
