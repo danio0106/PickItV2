@@ -262,6 +262,13 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
 
     private List<LabelOnGround> UpdateChestList()
     {
+        bool IsKnownDelveInteractableMetadata(string metadata)
+        {
+            return metadata.Contains("DelveMinerWildVein", StringComparison.OrdinalIgnoreCase) ||
+                   metadata.Contains("DelveMinerWildChest", StringComparison.OrdinalIgnoreCase) ||
+                   metadata.Contains("AzuriteVein", StringComparison.OrdinalIgnoreCase);
+        }
+
         bool IsFittingEntity(Entity entity)
         {
             if (string.IsNullOrEmpty(entity.Metadata))
@@ -269,8 +276,14 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                 return false;
             }
 
-            // Never target NPC metadata, even if a regex accidentally matches it.
-            if (entity.Metadata.StartsWith("Metadata/NPC/", StringComparison.OrdinalIgnoreCase))
+            var hasEnabledDelveRule = Settings.ChestSettings.ChestList.Content.Any(x =>
+                x.Enabled?.Value == true &&
+                !string.IsNullOrEmpty(x.MetadataRegex?.Value) &&
+                x.MetadataRegex.Value.Contains("Delve", StringComparison.OrdinalIgnoreCase));
+
+            // Never target NPC metadata, except explicit Delve interactables that are not real town/quest NPCs.
+            if (entity.Metadata.StartsWith("Metadata/NPC/", StringComparison.OrdinalIgnoreCase) &&
+                !(hasEnabledDelveRule && IsKnownDelveInteractableMetadata(entity.Metadata)))
             {
                 return false;
             }
@@ -279,6 +292,12 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                 x => x.Enabled?.Value == true &&
                      !string.IsNullOrEmpty(x.MetadataRegex?.Value) &&
                      _regexes.GetValue(x.MetadataRegex.Value, p => new Regex(p))!.IsMatch(entity.Metadata));
+
+            // Map Delve rules to known non-chest Delve metadata paths used by veins/caches.
+            if (matchedRule == null && hasEnabledDelveRule && IsKnownDelveInteractableMetadata(entity.Metadata))
+            {
+                return true;
+            }
 
             if (matchedRule == null)
             {
