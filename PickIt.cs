@@ -524,6 +524,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         }
 
         var tryCount = 0;
+        var hoverAttemptsWithoutTarget = 0;
         try
         {
             while (tryCount < 3)
@@ -576,9 +577,25 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                     if (!IsTargeted(item, label))
                     {
                         await SetCursorPositionAsync(position, item, label);
+
+                        // Some Delve chests don't consistently report targeted state.
+                        // After a couple hover attempts, send a direct click fallback.
+                        hoverAttemptsWithoutTarget++;
+                        var canAttemptClick = tryCount == 0 || _sinceLastClick.ElapsedMilliseconds >= Settings.PauseBetweenClicks;
+                        if (item.HasComponent<Chest>() && hoverAttemptsWithoutTarget >= 2 && canAttemptClick)
+                        {
+                            if (await CheckPortal(label)) return true;
+                            Input.Click(MouseButtons.Left);
+                            _sinceLastClick.Restart();
+                            tryCount++;
+                            hoverAttemptsWithoutTarget = 0;
+                        }
+
                         await TaskUtils.NextFrame();
                         continue;
                     }
+
+                    hoverAttemptsWithoutTarget = 0;
 
                     if (await CheckPortal(label)) return true;
                     if (!IsTargeted(item, label))
@@ -640,7 +657,6 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
 
     private static async SyncTask<bool> SetCursorPositionAsync(Vector2 position, Entity item, Element label)
     {
-        DebugWindow.LogMsg($"Set cursor pos: {position}");
         Input.SetCursorPos(position);
         return await TaskUtils.CheckEveryFrame(() => IsTargeted(item, label), new CancellationTokenSource(60).Token);
     }
