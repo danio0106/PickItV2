@@ -43,6 +43,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     private bool? _magicInputAvailable;
     private DateTime _nextMagicInputProbeAt = DateTime.MinValue;
     private Action<Entity, uint> _cachedMagicInputCast;
+    private DateTime _lastEmergencyUnblockLogAt = DateTime.MinValue;
     private DateTime _preserveLeftMouseIntentTill = DateTime.MinValue;
 
     public PickIt()
@@ -161,6 +162,8 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
 
     public override Job Tick()
     {
+        TryEmergencyReleaseInputBlock();
+
         var playerInvCount = GameController?.Game?.IngameState?.Data?.ServerData?.PlayerInventories?.Count;
         if (playerInvCount is null or 0)
             return null;
@@ -610,6 +613,29 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         }
     }
 
+    private void TryEmergencyReleaseInputBlock()
+    {
+        if (_mouseBlockHookHandle == IntPtr.Zero)
+        {
+            return;
+        }
+
+        if (!Input.GetKeyState(Keys.Escape))
+        {
+            return;
+        }
+
+        EndBlockMouseInput();
+        _pluginBridgeModeOverride = false;
+        DisableLazyLootingTill = DateTime.Now.AddSeconds(2);
+
+        if (DateTime.Now > _lastEmergencyUnblockLogAt.AddMilliseconds(500))
+        {
+            LogMessage("[PickIt] Emergency input unblock triggered by Escape.");
+            _lastEmergencyUnblockLogAt = DateTime.Now;
+        }
+    }
+
     private Action<Entity, uint> GetMagicInputCastIfAvailable()
     {
         var now = DateTime.Now;
@@ -777,6 +803,8 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         {
             while (tryCount < 3)
             {
+                TryEmergencyReleaseInputBlock();
+
                 // Keep lazy-looting pause hotkey responsive, even mid-pick attempt.
                 if (Input.GetKeyState(Settings.LazyLootingPauseKey))
                 {
