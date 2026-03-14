@@ -169,6 +169,11 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         if (Input.GetKeyState(Settings.LazyLootingPauseKey)) DisableLazyLootingTill = DateTime.Now.AddSeconds(2);
         if (Input.GetKeyState(Keys.LButton)) _preserveLeftMouseIntentTill = DateTime.Now.AddMilliseconds(350);
 
+        if (_mouseBlockHookHandle != IntPtr.Zero && DateTime.Now > _mouseBlockFailsafeUntil)
+        {
+            EndBlockMouseInput();
+        }
+
         return null;
     }
 
@@ -548,9 +553,11 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     }
 
     private const int WH_MOUSE_LL = 14;
+    private const uint LLMHF_INJECTED = 0x00000001;
     private delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
     private LowLevelMouseProc _mouseBlockHookDelegate;
     private IntPtr _mouseBlockHookHandle = IntPtr.Zero;
+    private DateTime _mouseBlockFailsafeUntil = DateTime.MinValue;
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelMouseProc lpfn, IntPtr hMod, uint dwThreadId);
@@ -563,6 +570,16 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
 
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
     private struct POINT { public int X; public int Y; }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct MSLLHOOKSTRUCT
+    {
+        public POINT Pt;
+        public uint MouseData;
+        public uint Flags;
+        public uint Time;
+        public IntPtr DwExtraInfo;
+    }
 
     [DllImport("user32.dll")]
     private static extern bool GetCursorPos(out POINT lpPoint);
@@ -624,13 +641,32 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     }
 
     private IntPtr MouseBlockCallback(int nCode, IntPtr wParam, IntPtr lParam)
-        => nCode >= 0 ? (IntPtr)1 : CallNextHookEx(_mouseBlockHookHandle, nCode, wParam, lParam);
+    {
+        if (nCode >= 0)
+        {
+            var hookData = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
+            var isInjected = (hookData.Flags & LLMHF_INJECTED) != 0;
+
+            // Block only physical mouse input from the user.
+            // Allow injected input so PickIt's own Input.Click/SetCursorPos keeps working.
+            if (!isInjected)
+            {
+                return (IntPtr)1;
+            }
+        }
+
+        return CallNextHookEx(_mouseBlockHookHandle, nCode, wParam, lParam);
+    }
 
     private bool BeginBlockMouseInput()
     {
         if (_mouseBlockHookHandle != IntPtr.Zero) return false;
         _mouseBlockHookDelegate = MouseBlockCallback;
         _mouseBlockHookHandle = SetWindowsHookEx(WH_MOUSE_LL, _mouseBlockHookDelegate, IntPtr.Zero, 0);
+        if (_mouseBlockHookHandle != IntPtr.Zero)
+        {
+            _mouseBlockFailsafeUntil = DateTime.Now.AddSeconds(2);
+        }
         return _mouseBlockHookHandle != IntPtr.Zero;
     }
 
@@ -639,6 +675,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         if (_mouseBlockHookHandle == IntPtr.Zero) return;
         UnhookWindowsHookEx(_mouseBlockHookHandle);
         _mouseBlockHookHandle = IntPtr.Zero;
+        _mouseBlockFailsafeUntil = DateTime.MinValue;
     }
 
     private bool _isPickingUp = false;
