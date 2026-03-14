@@ -38,6 +38,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     private readonly ConditionalWeakTable<string, Regex> _regexes = [];
     private readonly Dictionary<long, DateTime> _recentPickupAttempts = [];
     private bool _warnedMissingMagicInput;
+    private bool _warnedMagicInputFailed;
 
     public PickIt()
     {
@@ -170,7 +171,8 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         DrawInventoryCells();
 
         // Re-assert held LMB for a short window after pickup clicks to avoid occasional missed restores.
-        if (_forceRestoreLeftMouseTill > DateTime.Now && !Input.IsKeyDown(Keys.LButton))
+        // Only do this while the user is still physically holding LMB.
+        if (_forceRestoreLeftMouseTill > DateTime.Now && Input.GetKeyState(Keys.LButton) && !Input.IsKeyDown(Keys.LButton))
         {
             Input.LeftDown();
         }
@@ -614,11 +616,10 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     {
         _isPickingUp = true;
         var didAttemptClick = false;
-        var restoreLeftMouseAfterPickup = false;
-        if (Settings.UnclickLeftMouseButton && Input.IsKeyDown(Keys.LButton))
+        var restoreLeftMouseAfterPickup = Settings.UnclickLeftMouseButton && (Input.GetKeyState(Keys.LButton) || Input.IsKeyDown(Keys.LButton));
+        if (restoreLeftMouseAfterPickup)
         {
             Input.LeftUp();
-            restoreLeftMouseAfterPickup = true;
         }
 
         var tryCount = 0;
@@ -681,7 +682,28 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                         continue;
                     }
 
-                    magicInputCast!(item, 0x400);
+                    if (Settings.UnclickLeftMouseButton && (Input.GetKeyState(Keys.LButton) || Input.IsKeyDown(Keys.LButton)))
+                    {
+                        Input.LeftUp();
+                    }
+
+                    try
+                    {
+                        magicInputCast!(item, 0x400);
+                    }
+                    catch (Exception ex)
+                    {
+                        if (!_warnedMagicInputFailed)
+                        {
+                            DebugWindow.LogError($"[PickIt] MagicInput call failed: {ex.Message}. Falling back to mouse input.", 10);
+                            _warnedMagicInputFailed = true;
+                        }
+
+                        Settings.UseMagicInput.Value = false;
+                        await TaskUtils.NextFrame();
+                        continue;
+                    }
+
                     didAttemptClick = true;
                     _sinceLastClick.Restart();
                     tryCount++;
@@ -700,6 +722,10 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                         if (item.HasComponent<Chest>() && hoverAttemptsWithoutTarget >= 2 && canAttemptFallbackClick)
                         {
                             if (await CheckPortal(label)) return true;
+                            if (Settings.UnclickLeftMouseButton && (Input.GetKeyState(Keys.LButton) || Input.IsKeyDown(Keys.LButton)))
+                            {
+                                Input.LeftUp();
+                            }
                             Input.Click(MouseButtons.Left);
                             didAttemptClick = true;
                             _sinceLastClick.Restart();
@@ -727,6 +753,11 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                         continue;
                     }
 
+                    if (Settings.UnclickLeftMouseButton && (Input.GetKeyState(Keys.LButton) || Input.IsKeyDown(Keys.LButton)))
+                    {
+                        Input.LeftUp();
+                    }
+
                     Input.Click(MouseButtons.Left);
                     didAttemptClick = true;
                     _sinceLastClick.Restart();
@@ -738,9 +769,9 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         }
         finally
         {
-            if (restoreLeftMouseAfterPickup && !Input.IsKeyDown(Keys.LButton))
+            if (restoreLeftMouseAfterPickup)
             {
-                _forceRestoreLeftMouseTill = DateTime.Now.AddMilliseconds(450);
+                _forceRestoreLeftMouseTill = DateTime.Now.AddMilliseconds(700);
                 Input.LeftDown();
             }
         }
