@@ -364,16 +364,9 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         bool IsKnownDelveInteractable(Entity entity)
         {
             var metadata = entity.Metadata ?? string.Empty;
-            var path = entity.Path ?? string.Empty;
 
             return IsKnownDelveNpcInteractable(entity) ||
-                   metadata.StartsWith("Metadata/Chests/DelveChests/", StringComparison.OrdinalIgnoreCase) ||
-                   ((metadata.Contains("/Delve/", StringComparison.OrdinalIgnoreCase) ||
-                     path.Contains("/Delve/", StringComparison.OrdinalIgnoreCase) ||
-                     metadata.Contains("Azurite", StringComparison.OrdinalIgnoreCase) ||
-                     path.Contains("Azurite", StringComparison.OrdinalIgnoreCase)) &&
-                    !metadata.StartsWith("Metadata/NPC/", StringComparison.OrdinalIgnoreCase) &&
-                    (entity.HasComponent<Chest>() || entity.HasComponent<Targetable>()));
+                                     metadata.StartsWith("Metadata/Chests/DelveChests/", StringComparison.OrdinalIgnoreCase);
         }
 
         bool IsFittingEntity(Entity entity)
