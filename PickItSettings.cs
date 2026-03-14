@@ -76,6 +76,7 @@ public class ChestSettings
             "^Metadata/Chests/QuestChests/",
             "^Metadata/Chests/LeaguesExpedition/",
             "^Metadata/Chests/LegionChests/",
+            "^Metadata/Chests/DelveChests/",
             "^Metadata/Chests/Blight",
             "^Metadata/Chests/Breach/",
             "^Metadata/Chests/IncursionChest",

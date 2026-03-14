@@ -294,14 +294,19 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                      !string.IsNullOrEmpty(x.MetadataRegex?.Value) &&
                      _regexes.GetValue(x.MetadataRegex.Value, p => new Regex(p))!.IsMatch(entity.Metadata));
 
-            // Map Delve rules to known non-chest Delve metadata paths used by veins/caches.
-            if (matchedRule == null && hasEnabledDelveRule && IsKnownDelveInteractableMetadata(entity.Metadata))
-            {
-                return true;
-            }
-
+            // Allow known Delve interactables (chests + veins) even when no explicit rule matches.
+            // The NPC guard above already prevents non-Delve NPCs from reaching here.
             if (matchedRule == null)
             {
+                if (IsKnownDelveInteractableMetadata(entity.Metadata))
+                {
+                    if (Settings.DebugHighlight)
+                        DebugWindow.LogMsg($"[PickIt] Delve fallback matched: {entity.Metadata}", 5);
+                    return true;
+                }
+
+                if (Settings.DebugHighlight)
+                    DebugWindow.LogMsg($"[PickIt] No rule matched: {entity.Metadata}", 5);
                 return false;
             }
 
