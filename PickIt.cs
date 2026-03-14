@@ -40,6 +40,9 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     private readonly Dictionary<long, DateTime> _recentPickupAttempts = [];
     private bool _warnedMissingMagicInput;
     private bool _warnedMagicInputFailed;
+    private bool? _magicInputAvailable;
+    private DateTime _nextMagicInputProbeAt = DateTime.MinValue;
+    private Action<Entity, uint> _cachedMagicInputCast;
     private DateTime _preserveLeftMouseIntentTill = DateTime.MinValue;
 
     public PickIt()
@@ -577,6 +580,49 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         return (GetAsyncKeyState(vkLButton) & 0x8000) != 0;
     }
 
+    private void EnsureLeftMouseUpIfNotPhysicallyHeld()
+    {
+        if (!Settings.UnclickLeftMouseButton)
+        {
+            return;
+        }
+
+        if (!IsPhysicalLeftMouseDown() && Input.IsKeyDown(Keys.LButton))
+        {
+            Input.LeftUp();
+        }
+    }
+
+    private Action<Entity, uint> GetMagicInputCastIfAvailable()
+    {
+        var now = DateTime.Now;
+        if (_cachedMagicInputCast != null && _nextMagicInputProbeAt > now)
+        {
+            return _cachedMagicInputCast;
+        }
+
+        _nextMagicInputProbeAt = now.AddMilliseconds(500);
+        var resolved = GameController.PluginBridge.GetMethod<Action<Entity, uint>>("MagicInput.CastSkillWithTarget");
+        var availableNow = resolved != null;
+
+        if (_magicInputAvailable != availableNow)
+        {
+            if (availableNow)
+            {
+                LogMessage("[PickIt] MagicInput bridge is available.");
+            }
+            else
+            {
+                LogMessage("[PickIt] MagicInput bridge is unavailable. Falling back to mouse input.");
+            }
+
+            _magicInputAvailable = availableNow;
+        }
+
+        _cachedMagicInputCast = resolved;
+        return _cachedMagicInputCast;
+    }
+
     private IntPtr MouseBlockCallback(int nCode, IntPtr wParam, IntPtr lParam)
         => nCode >= 0 ? (IntPtr)1 : CallNextHookEx(_mouseBlockHookHandle, nCode, wParam, lParam);
 
@@ -676,6 +722,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     private async SyncTask<bool> PickAsync(Entity item, Element label, RectangleF? customRect, Action onNonClickable, bool isLazyWorkMode)
     {
         _isPickingUp = true;
+        EnsureLeftMouseUpIfNotPhysicallyHeld();
         var didAttemptClick = false;
         var leftMouseHeldAtStart = IsPhysicalLeftMouseDown();
         var restoreLeftMouseAfterPickup = Settings.UnclickLeftMouseButton && leftMouseHeldAtStart;
@@ -723,9 +770,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                 }
 
                 var useMagicInput = Settings.UseMagicInput.Value;
-                var magicInputCast = useMagicInput
-                    ? GameController.PluginBridge.GetMethod<Action<Entity, uint>>("MagicInput.CastSkillWithTarget")
-                    : null;
+                var magicInputCast = useMagicInput ? GetMagicInputCastIfAvailable() : null;
 
                 if (useMagicInput && magicInputCast == null)
                 {
@@ -747,10 +792,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                         continue;
                     }
 
-                    if (Settings.UnclickLeftMouseButton && (Input.GetKeyState(Keys.LButton) || Input.IsKeyDown(Keys.LButton)))
-                    {
-                        Input.LeftUp();
-                    }
+                    EnsureLeftMouseUpIfNotPhysicallyHeld();
 
                     try
                     {
@@ -787,10 +829,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                         if (item.HasComponent<Chest>() && hoverAttemptsWithoutTarget >= 2 && canAttemptFallbackClick)
                         {
                             if (await CheckPortal(label)) return true;
-                            if (Settings.UnclickLeftMouseButton && (Input.GetKeyState(Keys.LButton) || Input.IsKeyDown(Keys.LButton)))
-                            {
-                                Input.LeftUp();
-                            }
+                            EnsureLeftMouseUpIfNotPhysicallyHeld();
                             Input.Click(MouseButtons.Left);
                             didAttemptClick = true;
                             _sinceLastClick.Restart();
@@ -818,10 +857,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                         continue;
                     }
 
-                    if (Settings.UnclickLeftMouseButton && (Input.GetKeyState(Keys.LButton) || Input.IsKeyDown(Keys.LButton)))
-                    {
-                        Input.LeftUp();
-                    }
+                    EnsureLeftMouseUpIfNotPhysicallyHeld();
 
                     Input.Click(MouseButtons.Left);
                     didAttemptClick = true;
@@ -838,6 +874,8 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
             {
                 EndBlockMouseInput();
             }
+
+            EnsureLeftMouseUpIfNotPhysicallyHeld();
 
             if (restoreLeftMouseAfterPickup && IsPhysicalLeftMouseDown())
             {
