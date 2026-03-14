@@ -89,6 +89,12 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
             return false;
         }
 
+        if (Input.GetKeyState(Keys.Menu) || Input.GetKeyState(Keys.LMenu) || Input.GetKeyState(Keys.RMenu))
+        {
+            _pluginBridgeModeOverride = false;
+            return false;
+        }
+
         if (!GameController.Player.TryGetComponent<Life>(out var lifeComponent) || lifeComponent.CurHP <= 0)
         {
             _pluginBridgeModeOverride = false;
