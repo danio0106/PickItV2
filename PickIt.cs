@@ -541,8 +541,37 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         return labelQuery.FirstOrDefault();
     }
 
+    private const int WH_MOUSE_LL = 14;
+    private delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
+    private LowLevelMouseProc _mouseBlockHookDelegate;
+    private IntPtr _mouseBlockHookHandle = IntPtr.Zero;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelMouseProc lpfn, IntPtr hMod, uint dwThreadId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+
     [DllImport("user32.dll")]
-    private static extern bool BlockInput(bool fBlockIt);
+    private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+
+    private IntPtr MouseBlockCallback(int nCode, IntPtr wParam, IntPtr lParam)
+        => nCode >= 0 ? (IntPtr)1 : CallNextHookEx(_mouseBlockHookHandle, nCode, wParam, lParam);
+
+    private bool BeginBlockMouseInput()
+    {
+        if (_mouseBlockHookHandle != IntPtr.Zero) return false;
+        _mouseBlockHookDelegate = MouseBlockCallback;
+        _mouseBlockHookHandle = SetWindowsHookEx(WH_MOUSE_LL, _mouseBlockHookDelegate, IntPtr.Zero, 0);
+        return _mouseBlockHookHandle != IntPtr.Zero;
+    }
+
+    private void EndBlockMouseInput()
+    {
+        if (_mouseBlockHookHandle == IntPtr.Zero) return;
+        UnhookWindowsHookEx(_mouseBlockHookHandle);
+        _mouseBlockHookHandle = IntPtr.Zero;
+    }
 
     private bool _isPickingUp = false;
     private DateTime _forceRestoreLeftMouseTill = DateTime.MinValue;
@@ -636,7 +665,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
             Input.LeftUp();
         }
 
-        var inputBlocked = Settings.BlockInputWhilePickingUp.Value && BlockInput(true);
+        var inputBlocked = Settings.BlockInputWhilePickingUp.Value && BeginBlockMouseInput();
         var tryCount = 0;
         var hoverAttemptsWithoutTarget = 0;
         try
@@ -786,7 +815,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         {
             if (inputBlocked)
             {
-                BlockInput(false);
+                EndBlockMouseInput();
             }
 
             if (restoreLeftMouseAfterPickup)
