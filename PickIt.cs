@@ -548,36 +548,44 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
 
                 if (Settings.UseMagicInput)
                 {
-                    if (_sinceLastClick.ElapsedMilliseconds > Settings.PauseBetweenClicks)
+                    var canAttemptClick = tryCount == 0 || _sinceLastClick.ElapsedMilliseconds >= Settings.PauseBetweenClicks;
+                    if (!canAttemptClick)
                     {
-                        GameController.PluginBridge.GetMethod<Action<Entity, uint>>("MagicInput.CastSkillWithTarget")(item, 0x400);
-                        _sinceLastClick.Restart();
-                        tryCount++;
+                        await TaskUtils.NextFrame();
+                        continue;
                     }
+
+                    GameController.PluginBridge.GetMethod<Action<Entity, uint>>("MagicInput.CastSkillWithTarget")(item, 0x400);
+                    _sinceLastClick.Restart();
+                    tryCount++;
                 }
                 else
                 {
                     var position = label.GetClientRect().ClickRandomNum(5, 3) + GameController.Window.GetWindowRectangleTimeCache.TopLeft.ToVector2Num();
-                    if (_sinceLastClick.ElapsedMilliseconds > Settings.PauseBetweenClicks)
+                    if (!IsTargeted(item, label))
                     {
-                        if (!IsTargeted(item, label))
-                        {
-                            await SetCursorPositionAsync(position, item, label);
-                        }
-                        else
-                        {
-                            if (await CheckPortal(label)) return true;
-                            if (!IsTargeted(item, label))
-                            {
-                                await TaskUtils.NextFrame();
-                                continue;
-                            }
-
-                            Input.Click(MouseButtons.Left);
-                            _sinceLastClick.Restart();
-                            tryCount++;
-                        }
+                        await SetCursorPositionAsync(position, item, label);
+                        await TaskUtils.NextFrame();
+                        continue;
                     }
+
+                    if (await CheckPortal(label)) return true;
+                    if (!IsTargeted(item, label))
+                    {
+                        await TaskUtils.NextFrame();
+                        continue;
+                    }
+
+                    var canAttemptClick = tryCount == 0 || _sinceLastClick.ElapsedMilliseconds >= Settings.PauseBetweenClicks;
+                    if (!canAttemptClick)
+                    {
+                        await TaskUtils.NextFrame();
+                        continue;
+                    }
+
+                    Input.Click(MouseButtons.Left);
+                    _sinceLastClick.Restart();
+                    tryCount++;
                 }
 
                 await TaskUtils.NextFrame();
