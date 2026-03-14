@@ -123,6 +123,12 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     {
         DrawInventoryCells();
 
+        // Re-assert held LMB for a short window after pickup clicks to avoid occasional missed restores.
+        if (_forceRestoreLeftMouseTill > DateTime.Now && !Input.IsKeyDown(Keys.LButton))
+        {
+            Input.LeftDown();
+        }
+
         if (Settings.DebugHighlight)
         {
             foreach (var item in GetItemsToPickup(false))
@@ -326,7 +332,17 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
             return false;
         }
 
-        var itemPos = item.QueriedItem.Entity.PosNum;
+        return IsEntityInLazyLootRange(item.QueriedItem.Entity);
+    }
+
+    private bool IsEntityInLazyLootRange(Entity entity)
+    {
+        if (entity == null)
+        {
+            return false;
+        }
+
+        var itemPos = entity.PosNum;
         var playerPos = GameController.Player.PosNum;
         return Math.Abs(itemPos.Z - playerPos.Z) <= 50 &&
                itemPos.Xy().DistanceSquared(playerPos.Xy()) <= 275 * 275;
@@ -401,6 +417,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     }
 
     private bool _isPickingUp = false;
+    private DateTime _forceRestoreLeftMouseTill = DateTime.MinValue;
     private async SyncTask<bool> RunPickerIterationAsync()
     {
         _isPickingUp = false;
@@ -427,7 +444,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
 
                         if (shouldPickChest)
                         {
-                            await PickAsync(chestLabel.ItemOnGround, chestLabel.Label, null, _chestLabels.ForceUpdate);
+                            await PickAsync(chestLabel.ItemOnGround, chestLabel.Label, null, _chestLabels.ForceUpdate, workMode == WorkMode.Lazy);
                             return true;
                         }
                     }
@@ -439,7 +456,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                 }
 
                 pickUpThisItem.AttemptedPickups++;
-                await PickAsync(pickUpThisItem.QueriedItem.Entity, pickUpThisItem.QueriedItem.Label, pickUpThisItem.QueriedItem.ClientRect, () => { });
+                await PickAsync(pickUpThisItem.QueriedItem.Entity, pickUpThisItem.QueriedItem.Label, pickUpThisItem.QueriedItem.ClientRect, () => { }, workMode == WorkMode.Lazy);
             }
         }
         finally
@@ -465,7 +482,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                         && (Settings.PickUpWhenInventoryIsFull || CanFitInventory(x))) ?? [];
     }
 
-    private async SyncTask<bool> PickAsync(Entity item, Element label, RectangleF? customRect, Action onNonClickable)
+    private async SyncTask<bool> PickAsync(Entity item, Element label, RectangleF? customRect, Action onNonClickable, bool isLazyWorkMode)
     {
         _isPickingUp = true;
         var restoreLeftMouseAfterPickup = false;
@@ -484,6 +501,12 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                 if (Input.GetKeyState(Settings.LazyLootingPauseKey))
                 {
                     DisableLazyLootingTill = DateTime.Now.AddSeconds(2);
+                    return true;
+                }
+
+                // Avoid stale click attempts if the item is no longer in lazy-loot range.
+                if (isLazyWorkMode && !IsEntityInLazyLootRange(item))
+                {
                     return true;
                 }
 
@@ -543,6 +566,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         {
             if (restoreLeftMouseAfterPickup && !Input.IsKeyDown(Keys.LButton))
             {
+                _forceRestoreLeftMouseTill = DateTime.Now.AddMilliseconds(200);
                 Input.LeftDown();
             }
         }
