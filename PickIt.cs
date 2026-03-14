@@ -516,7 +516,8 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                     return true;
                 }
 
-                if (!Settings.IgnoreMoving && GameController.Player.GetComponent<Actor>().isMoving)
+                var shouldRespectMovementCheck = !Settings.IgnoreMoving && (!isLazyWorkMode || !Settings.IgnoreMovingInLazyLooting);
+                if (shouldRespectMovementCheck && GameController.Player.GetComponent<Actor>().isMoving)
                 {
                     if (item.DistancePlayer > Settings.ItemDistanceToIgnoreMoving.Value)
                     {
