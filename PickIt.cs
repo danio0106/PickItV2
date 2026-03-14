@@ -178,8 +178,11 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
             _preserveLeftMouseIntentTill = DateTime.Now.AddMilliseconds(350);
         }
 
-        // Re-assert held LMB for a short window after pickup clicks to avoid occasional missed restores.
-        if (_forceRestoreLeftMouseTill > DateTime.Now && _preserveLeftMouseIntentTill > DateTime.Now && !Input.IsKeyDown(Keys.LButton))
+        // Re-assert held LMB for a short window after pickup clicks, but only if physically held.
+        if (_forceRestoreLeftMouseTill > DateTime.Now &&
+            _preserveLeftMouseIntentTill > DateTime.Now &&
+            IsPhysicalLeftMouseDown() &&
+            !Input.IsKeyDown(Keys.LButton))
         {
             Input.LeftDown();
         }
@@ -564,6 +567,16 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     [DllImport("user32.dll")]
     private static extern bool SetCursorPos(int x, int y);
 
+    
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+
+    private static bool IsPhysicalLeftMouseDown()
+    {
+        const int vkLButton = 0x01;
+        return (GetAsyncKeyState(vkLButton) & 0x8000) != 0;
+    }
+
     private IntPtr MouseBlockCallback(int nCode, IntPtr wParam, IntPtr lParam)
         => nCode >= 0 ? (IntPtr)1 : CallNextHookEx(_mouseBlockHookHandle, nCode, wParam, lParam);
 
@@ -664,10 +677,8 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     {
         _isPickingUp = true;
         var didAttemptClick = false;
-        var restoreLeftMouseAfterPickup = Settings.UnclickLeftMouseButton &&
-                                          (Input.GetKeyState(Keys.LButton) ||
-                                           Input.IsKeyDown(Keys.LButton) ||
-                                           _preserveLeftMouseIntentTill > DateTime.Now);
+        var leftMouseHeldAtStart = IsPhysicalLeftMouseDown();
+        var restoreLeftMouseAfterPickup = Settings.UnclickLeftMouseButton && leftMouseHeldAtStart;
         if (restoreLeftMouseAfterPickup)
         {
             _preserveLeftMouseIntentTill = DateTime.Now.AddMilliseconds(700);
@@ -828,7 +839,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                 EndBlockMouseInput();
             }
 
-            if (restoreLeftMouseAfterPickup)
+            if (restoreLeftMouseAfterPickup && IsPhysicalLeftMouseDown())
             {
                 SetCursorPos(cursorSnapshot.X, cursorSnapshot.Y);
                 _preserveLeftMouseIntentTill = DateTime.Now.AddMilliseconds(700);
