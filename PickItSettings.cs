@@ -114,7 +114,16 @@ public class InventoryRender
     public ColorNode UnoccupiedSlotColor { get; set; } = new Color(130, 250, 130, 81);
 }
 
-public record PickitRule(string Name, string Location, bool Enabled)
+public class PickitRule
 {
-    public bool Enabled = Enabled;
+    public PickitRule(string name, string location, bool enabled)
+    {
+        Name = name;
+        Location = location;
+        Enabled = enabled;
+    }
+
+    public string Name { get; }
+    public string Location { get; }
+    public bool Enabled { get; set; }
 }

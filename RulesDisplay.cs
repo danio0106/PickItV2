@@ -212,13 +212,7 @@ public class RulesDisplay
                 .GetFiles("*.ifl", SearchOption.AllDirectories)
                 .ToList();
 
-            var newRules = diskFiles
-                .Select(fileInfo => new PickitRule(
-                    fileInfo.Name,
-                    Path.GetRelativePath(pickitConfigFileDirectory, fileInfo.FullName),
-                    false))
-                .ExceptBy(existingRules.Select(rule => rule.Location), groundRule => groundRule.Location)
-                .ToList();
+            var newRules = new System.Collections.Generic.List<PickitRule>();
 
             foreach (var groundRule in existingRules)
             {
@@ -228,6 +222,15 @@ public class RulesDisplay
                 else
                     DebugWindow.LogError($"[LoadAndApplyRules] File '{groundRule.Name}' not found.", 10);
             }
+
+            var existingRuleLocations = existingRules.Select(rule => rule.Location).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            newRules.AddRange(diskFiles
+                .Select(fileInfo => new PickitRule(
+                    fileInfo.Name,
+                    Path.GetRelativePath(pickitConfigFileDirectory, fileInfo.FullName),
+                    false))
+                .Where(rule => !existingRuleLocations.Contains(rule.Location))
+                .OrderBy(rule => rule.Location, StringComparer.OrdinalIgnoreCase));
 
             Main.ItemFilters = newRules
                 .Where(rule => rule.Enabled)

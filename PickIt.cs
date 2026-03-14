@@ -36,6 +36,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     public static PickIt Main;
     private readonly Stopwatch _sinceLastClick = Stopwatch.StartNew();
     private readonly ConditionalWeakTable<string, Regex> _regexes = [];
+    private readonly Dictionary<long, DateTime> _recentPickupAttempts = [];
 
     public PickIt()
     {
@@ -60,7 +61,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
 
         #endregion
         
-        Task.Run(RulesDisplay.LoadAndApplyRules);
+        RulesDisplay.LoadAndApplyRules();
         GameController.PluginBridge.SaveMethod("PickIt.ListItems", () => GetItemsToPickup(false).Select(x => x.QueriedItem).ToList());
         GameController.PluginBridge.SaveMethod("PickIt.IsActive", () => _pickUpTask?.GetAwaiter().IsCompleted == false);
         GameController.PluginBridge.SaveMethod("PickIt.SetWorkMode", (bool running) => { _pluginBridgeModeOverride = running; });
@@ -260,6 +261,36 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         return Settings.PickUpEverything || (ItemFilters?.Any(filter => filter.Matches(item)) ?? false);
     }
 
+    private bool WasRecentlyAttempted(Entity entity)
+    {
+        if (entity?.Address is not > 0)
+        {
+            return false;
+        }
+
+        if (_recentPickupAttempts.TryGetValue(entity.Address, out var retryUntil))
+        {
+            if (retryUntil > DateTime.Now)
+            {
+                return true;
+            }
+
+            _recentPickupAttempts.Remove(entity.Address);
+        }
+
+        return false;
+    }
+
+    private void RememberAttempt(Entity entity, int retryDelayMs = 600)
+    {
+        if (entity?.Address is not > 0)
+        {
+            return;
+        }
+
+        _recentPickupAttempts[entity.Address] = DateTime.Now.AddMilliseconds(retryDelayMs);
+    }
+
     private List<LabelOnGround> UpdateChestList()
     {
         bool IsKnownDelveInteractable(Entity entity)
@@ -304,13 +335,9 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
             {
                 if (IsKnownDelveInteractable(entity))
                 {
-                    if (Settings.DebugHighlight)
-                        DebugWindow.LogMsg($"[PickIt] Delve fallback matched: {entity.Metadata} | {entity.Path}", 5);
                     return true;
                 }
 
-                if (Settings.DebugHighlight)
-                    DebugWindow.LogMsg($"[PickIt] No rule matched: {entity.Metadata} | {entity.Path}", 5);
                 return false;
             }
 
@@ -496,7 +523,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                     return true;
                 }
 
-                pickUpThisItem.AttemptedPickups++;
+                RememberAttempt(pickUpThisItem.QueriedItem.Entity);
                 await PickAsync(pickUpThisItem.QueriedItem.Entity, pickUpThisItem.QueriedItem.Label, pickUpThisItem.QueriedItem.ClientRect, () => { }, workMode == WorkMode.Lazy);
             }
         }
@@ -518,7 +545,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
             .Where(x => x.Entity?.Path != null && IsLabelClickable(x.Label, x.ClientRect))
             .Select(x => new PickItItemData(x, GameController))
             .Where(x => x.Entity != null
-                        && (!filterAttempts || x.AttemptedPickups == 0)
+                        && (!filterAttempts || !WasRecentlyAttempted(x.Entity))
                         && DoWePickThis(x)
                         && (Settings.PickUpWhenInventoryIsFull || CanFitInventory(x))) ?? [];
     }
@@ -570,8 +597,8 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
 
                 if (Settings.UseMagicInput)
                 {
-                    var canAttemptClick = tryCount == 0 || _sinceLastClick.ElapsedMilliseconds >= Settings.PauseBetweenClicks;
-                    if (!canAttemptClick)
+                    var canAttemptMagicClick = tryCount == 0 || _sinceLastClick.ElapsedMilliseconds >= Settings.PauseBetweenClicks;
+                    if (!canAttemptMagicClick)
                     {
                         await TaskUtils.NextFrame();
                         continue;
@@ -591,8 +618,8 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                         // Some Delve chests don't consistently report targeted state.
                         // After a couple hover attempts, send a direct click fallback.
                         hoverAttemptsWithoutTarget++;
-                        var canAttemptClick = tryCount == 0 || _sinceLastClick.ElapsedMilliseconds >= Settings.PauseBetweenClicks;
-                        if (item.HasComponent<Chest>() && hoverAttemptsWithoutTarget >= 2 && canAttemptClick)
+                        var canAttemptFallbackClick = tryCount == 0 || _sinceLastClick.ElapsedMilliseconds >= Settings.PauseBetweenClicks;
+                        if (item.HasComponent<Chest>() && hoverAttemptsWithoutTarget >= 2 && canAttemptFallbackClick)
                         {
                             if (await CheckPortal(label)) return true;
                             Input.Click(MouseButtons.Left);
@@ -614,8 +641,8 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                         continue;
                     }
 
-                    var canAttemptClick = tryCount == 0 || _sinceLastClick.ElapsedMilliseconds >= Settings.PauseBetweenClicks;
-                    if (!canAttemptClick)
+                    var canAttemptNormalClick = tryCount == 0 || _sinceLastClick.ElapsedMilliseconds >= Settings.PauseBetweenClicks;
+                    if (!canAttemptNormalClick)
                     {
                         await TaskUtils.NextFrame();
                         continue;
