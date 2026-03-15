@@ -860,10 +860,16 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                 if (restoreLeftMouseAfterPickup)
                 {
                     SetCursorPos(cursorSnapshot.X, cursorSnapshot.Y);
-                    _restoreHeldLeftMouseTill = DateTime.Now.AddMilliseconds(1500);
-                    _preserveLeftMouseIntentTill = DateTime.Now.AddMilliseconds(1200);
-                    _forceRestoreLeftMouseTill = DateTime.Now.AddMilliseconds(1500);
-                    Input.LeftDown();
+
+                    // Re-check whether the user is STILL physically holding LMB.
+                    // If they released during the batch, don't press it back down.
+                    if (IsPhysicalLeftMouseDown())
+                    {
+                        _restoreHeldLeftMouseTill = DateTime.Now.AddMilliseconds(1500);
+                        _preserveLeftMouseIntentTill = DateTime.Now.AddMilliseconds(1200);
+                        _forceRestoreLeftMouseTill = DateTime.Now.AddMilliseconds(1500);
+                        Input.LeftDown();
+                    }
                 }
                 else if (inputBlocked)
                 {
