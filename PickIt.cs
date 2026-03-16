@@ -381,7 +381,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
             var metadata = entity.Metadata ?? string.Empty;
 
             // Real Delve interactables on NPC paths should behave like world objects, not actors/NPCs.
-            if (entity.HasComponent<Actor>())
+            if (entity.HasComponent<Actor>() || entity.Type == EntityType.Npc)
             {
                 return false;
             }
