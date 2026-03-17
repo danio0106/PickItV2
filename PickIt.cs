@@ -381,7 +381,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
             var metadata = entity.Metadata ?? string.Empty;
 
             // Real Delve interactables on NPC paths should behave like world objects, not actors/NPCs.
-            if (entity.HasComponent<Actor>() || entity.Type == EntityType.Npc)
+            if (entity.HasComponent<Actor>())
             {
                 return false;
             }
@@ -993,7 +993,10 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
             }
             else
             {
-                var position = label.GetClientRect().ClickRandomNum(5, 3) + GameController.Window.GetWindowRectangleTimeCache.TopLeft.ToVector2Num();
+                // Resolve a click point that avoids overlapping labels.
+                var resolvedClickPoint = ResolveClickPosition(label, customRect);
+                var position = resolvedClickPoint + GameController.Window.GetWindowRectangleTimeCache.TopLeft.ToVector2Num();
+
                 if (!IsTargeted(item, label))
                 {
                     await SetCursorPositionAsync(position, item, label);
@@ -1001,10 +1004,17 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
                     hoverAttemptsWithoutTarget++;
                     var canAttemptFallbackClick = tryCount == 0 || _sinceLastClick.ElapsedMilliseconds >= Settings.PauseBetweenClicks;
 
-                    // After a couple hover attempts without targeting, click anyway.
-                    // This handles Delve chests and items that don't report targeted state reliably.
+                    // After a couple hover attempts without targeting, click anyway —
+                    // but only if UIHover confirms we're on the right label (or targeting is unreliable).
                     if (hoverAttemptsWithoutTarget >= 2 && canAttemptFallbackClick)
                     {
+                        // UI hover verification: skip click if cursor is over the wrong label.
+                        if (!IsUIHoverMatchingLabel(label) && !item.HasComponent<Chest>())
+                        {
+                            await TaskUtils.NextFrame();
+                            continue;
+                        }
+
                         if (await CheckPortal(label)) return false;
                         EnsureLeftMouseUpIfNotPhysicallyHeld();
                         Input.Click(MouseButtons.Left);
@@ -1028,6 +1038,13 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
 
                 if (await CheckPortal(label)) return false;
                 if (!IsTargeted(item, label))
+                {
+                    await TaskUtils.NextFrame();
+                    continue;
+                }
+
+                // UI hover verification before normal click: confirm cursor is on our label.
+                if (!IsUIHoverMatchingLabel(label))
                 {
                     await TaskUtils.NextFrame();
                     continue;
@@ -1082,6 +1099,137 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         }
 
         return label is { HasShinyHighlight: true };
+    }
+
+    /// <summary>
+    /// After moving cursor, verify that UIHoverElement actually matches our target label.
+    /// Prevents clicking on a different item whose label overlaps the intended target.
+    /// </summary>
+    private bool IsUIHoverMatchingLabel(Element label)
+    {
+        var uiHover = GameController.IngameState.UIHoverElement;
+        if (uiHover == null || uiHover.Address == 0)
+            return false;
+
+        // Direct match on the label element itself.
+        if (uiHover.Address == label.Address)
+            return true;
+
+        // Sometimes the hover reports a child/parent — walk up a couple levels.
+        var parent = uiHover.Parent;
+        for (var i = 0; i < 3 && parent != null; i++)
+        {
+            if (parent.Address == label.Address)
+                return true;
+            parent = parent.Parent;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Finds a click point inside <paramref name="targetLabel"/>'s rect that is NOT obscured
+    /// by another visible ground label. Returns the point in client-space (before window offset).
+    /// Falls back to center with small jitter if all grid points are blocked.
+    /// </summary>
+    private Vector2 ResolveClickPosition(Element targetLabel, RectangleF? customRect)
+    {
+        var rect = customRect ?? targetLabel.GetClientRect();
+        var center = new Vector2(rect.Center.X, rect.Center.Y);
+
+        // Collect rects of OTHER visible ground labels that overlap our target.
+        var overlappingRects = CollectOverlappingLabelRects(targetLabel, rect);
+
+        // If nothing overlaps, just return center with a tiny jitter.
+        if (overlappingRects.Count == 0)
+            return AddJitter(center, rect, 3f);
+
+        // Check if center itself is unblocked.
+        if (!IsPointBlockedByAny(center, overlappingRects))
+            return AddJitter(center, rect, 2f);
+
+        // Grid-scan the label rect to find the closest unblocked point to center.
+        const int cols = 7;
+        const int rows = 5;
+        var stepX = rect.Width / cols;
+        var stepY = rect.Height / rows;
+        var bestPoint = center;
+        var bestDistSq = float.MaxValue;
+
+        for (var row = 0; row < rows; row++)
+        {
+            var sampleY = rect.Top + ((row + 0.5f) * stepY);
+            for (var col = 0; col < cols; col++)
+            {
+                var sampleX = rect.Left + ((col + 0.5f) * stepX);
+                var candidate = new Vector2(sampleX, sampleY);
+
+                if (IsPointBlockedByAny(candidate, overlappingRects))
+                    continue;
+
+                var dx = candidate.X - center.X;
+                var dy = candidate.Y - center.Y;
+                var distSq = dx * dx + dy * dy;
+                if (distSq < bestDistSq)
+                {
+                    bestDistSq = distSq;
+                    bestPoint = candidate;
+                }
+            }
+        }
+
+        // bestPoint is either the best unblocked grid point, or center (fallback).
+        return AddJitter(bestPoint, rect, 2f);
+    }
+
+    private List<RectangleF> CollectOverlappingLabelRects(Element targetLabel, RectangleF targetRect)
+    {
+        var result = new List<RectangleF>();
+        var allLabels = GameController?.Game?.IngameState?.IngameUi?.ItemsOnGroundLabelsVisible;
+        if (allLabels == null)
+            return result;
+
+        foreach (var other in allLabels)
+        {
+            if (other?.Label == null || !other.Label.IsValid || !other.Label.IsVisible)
+                continue;
+            if (other.Label.Address == targetLabel.Address)
+                continue;
+
+            var otherRect = other.Label.GetClientRect();
+            if (otherRect.Width <= 0 || otherRect.Height <= 0)
+                continue;
+            if (!targetRect.Intersects(otherRect))
+                continue;
+
+            result.Add(otherRect);
+        }
+
+        return result;
+    }
+
+    private static bool IsPointBlockedByAny(Vector2 point, List<RectangleF> blockers)
+    {
+        for (var i = 0; i < blockers.Count; i++)
+        {
+            var r = blockers[i];
+            if (point.X >= r.Left && point.X <= r.Right && point.Y >= r.Top && point.Y <= r.Bottom)
+                return true;
+        }
+        return false;
+    }
+
+    private static Vector2 AddJitter(Vector2 point, RectangleF bounds, float range)
+    {
+        var rng = Random.Shared;
+        var jx = (float)(rng.NextDouble() * range * 2 - range);
+        var jy = (float)(rng.NextDouble() * range * 2 - range);
+        var result = new Vector2(point.X + jx, point.Y + jy);
+
+        // Clamp back inside the label rect.
+        result.X = Math.Clamp(result.X, bounds.Left + 1, bounds.Right - 1);
+        result.Y = Math.Clamp(result.Y, bounds.Top + 1, bounds.Bottom - 1);
+        return result;
     }
 
     private static async SyncTask<bool> SetCursorPositionAsync(Vector2 position, Entity item, Element label)
