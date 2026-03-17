@@ -75,18 +75,8 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         GameController.PluginBridge.SaveMethod("PickIt.IsActive", () => _pickUpTask?.GetAwaiter().IsCompleted == false);
         GameController.PluginBridge.SaveMethod("PickIt.SetWorkMode", (bool running) => { _pluginBridgeModeOverride = running; });
 
-        if (Settings.UseMagicInput.Value)
-        {
-            var startupMagicInputCast = GetMagicInputCastIfAvailable();
-            if (startupMagicInputCast != null)
-            {
-                DebugWindow.LogMsg("[PickIt] Startup MagicInput probe: bridge available.", 10);
-            }
-            else
-            {
-                DebugWindow.LogError("[PickIt] Startup MagicInput probe: bridge unavailable.", 10);
-            }
-        }
+        // MagicInput startup probe removed — bridge is not available.
+        // MagicInput code remains but only activates if the user explicitly enables the setting.
 
         return true;
     }
@@ -655,6 +645,9 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
 
     private Action<Entity, uint> GetMagicInputCastIfAvailable()
     {
+        if (!Settings.UseMagicInput.Value)
+            return null;
+
         var now = DateTime.Now;
         if (_cachedMagicInputCast != null && _nextMagicInputProbeAt > now)
         {
@@ -675,7 +668,6 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
             else
             {
                 LogMessage("[PickIt] MagicInput bridge is unavailable. Falling back to mouse input.");
-                DebugWindow.LogError("[PickIt] MagicInput bridge is unavailable. Falling back to mouse input.", 10);
             }
 
             _magicInputAvailable = availableNow;
