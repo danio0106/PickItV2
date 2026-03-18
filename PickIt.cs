@@ -169,11 +169,11 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
     {
         TryEmergencyReleaseInputBlock();
 
-        var playerInvCount = GameController?.Game?.IngameState?.Data?.ServerData?.PlayerInventories?.Count;
-        if (playerInvCount is null or 0)
+        var playerInventoryPanel = GameController?.Game?.IngameState?.IngameUi?.InventoryPanel?[InventoryIndex.PlayerInventory];
+        if (playerInventoryPanel == null)
             return null;
 
-        _inventoryItems = GameController.Game.IngameState.Data.ServerData.PlayerInventories[(int)InventorySlotE.MainInventory1]?.Inventory;
+        _inventoryItems = playerInventoryPanel.ServerInventory;
         if (Input.GetKeyState(Settings.LazyLootingPauseKey)) DisableLazyLootingTill = DateTime.Now.AddSeconds(2);
         if (Input.GetKeyState(Keys.LButton)) _preserveLeftMouseIntentTill = DateTime.Now.AddMilliseconds(350);
 
