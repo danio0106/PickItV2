@@ -173,7 +173,7 @@ public partial class PickIt : BaseSettingsPlugin<PickItSettings>
         if (playerInvCount is null or 0)
             return null;
 
-        _inventoryItems = GameController.Game.IngameState.Data.ServerData.PlayerInventories[0].Inventory;
+        _inventoryItems = GameController.Game.IngameState.Data.ServerData.PlayerInventories[0]?.Inventory;
         if (Input.GetKeyState(Settings.LazyLootingPauseKey)) DisableLazyLootingTill = DateTime.Now.AddSeconds(2);
         if (Input.GetKeyState(Keys.LButton)) _preserveLeftMouseIntentTill = DateTime.Now.AddMilliseconds(350);
 
