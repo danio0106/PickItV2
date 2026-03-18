@@ -11,17 +11,11 @@ public partial class PickIt
 {
     private bool CanFitInventory(ItemData groundItem)
     {
-        if (_inventoryItems == null)
-            return true; // Can't read inventory data yet — assume it fits and let the game decide.
-
         return FindSpotInventory(groundItem) != null;
     }
 
     private bool CanFitInventory(int itemHeight, int itemWidth)
     {
-        if (_inventoryItems == null)
-            return true;
-
         return FindSpotInventory(itemHeight, itemWidth) != null;
     }
 
