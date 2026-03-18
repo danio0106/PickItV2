@@ -26,7 +26,10 @@ public partial class PickIt
     /// </summary>
     private Vector2? FindSpotInventory(ItemData item)
     {
-        var inventoryItems = _inventoryItems.InventorySlotItems;
+        var inventoryItems = _inventoryItems?.InventorySlotItems;
+        if (inventoryItems == null)
+            return null;
+
         var itemToStackWith = inventoryItems.FirstOrDefault(x => CanItemBeStacked(item, x));
         if (itemToStackWith != null)
         {
